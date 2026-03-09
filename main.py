@@ -50,7 +50,7 @@ def generate_scenario_dashboard(scenario_name: str, strategy_df, detection_metri
 
     # Title banner
     fig.suptitle(
-        f"GraphShield — Scenario: {scenario_name.replace('_', ' ')}",
+        f"AEGIS — Scenario: {scenario_name.replace('_', ' ')}",
         fontsize=22, fontweight="bold", color="white", y=0.97
     )
 
@@ -329,7 +329,7 @@ def execute_scenario_pipeline(scenario_name: str, G, entry_nodes, attacker_mode:
         # ----------------------------------------------------------------
         fig = plt.figure(figsize=(20, 14), facecolor=_DARK)
         fig.suptitle(
-            f"GraphShield — Scenario: {scenario_name.replace('_', ' ')}",
+            f"AEGIS — Scenario: {scenario_name.replace('_', ' ')}",
             fontsize=20, fontweight='bold', color=_TEXT, y=0.98
         )
 
@@ -587,35 +587,40 @@ def execute_scenario_pipeline(scenario_name: str, G, entry_nodes, attacker_mode:
             viz_path = f'outputs/network_{scenario_name}.html'
             os.makedirs('outputs', exist_ok=True)
 
-            # Fresh replay of BASE sim (low beta) — gives sparse, meaningful detections
+            # Replay BASE sim step-by-step at threshold=2.0 (NOT 0.5).
+            # threshold=0.5 floods gold: GraphSAGE propagates anomaly signal to
+            # ALL neighbours of infected nodes, flagging most of the graph.
             G_viz_replay = copy.deepcopy(G)
             reset_graph(G_viz_replay)
             detected_nodes = set()
+            prev_infected = set()
             for step in base_sim_result['timestep_log']:
                 if step['phase'] == 'baseline_recording':
                     continue
                 for n in step['newly_infected_nodes']:
                     G_viz_replay.nodes[n]['infection_state'] = 'infected'
-                flagged = anomaly_detector.detect_anomalies(G_viz_replay, threshold=0.5)
-                detected_nodes.update(flagged)
+                flagged = anomaly_detector.detect_anomalies(G_viz_replay, threshold=2.0)
+                early_warnings = [n for n in flagged if n not in prev_infected]
+                detected_nodes.update(early_warnings)
+                prev_infected.update(step['newly_infected_nodes'])
 
-            # Clear any stale detected flags on G_base, then set only the fresh ones
+            # Clear any stale detected flags on G_base, apply only fresh ones
             for n in G_base.nodes():
                 G_base.nodes[n].pop('detected', None)
             for n in detected_nodes:
                 if n in G_base.nodes and G_base.nodes[n].get('infection_state') != 'infected':
                     G_base.nodes[n]['detected'] = True
 
-            gold_count = sum(1 for _,d in G_base.nodes(data=True) if d.get('detected'))
-            red_count  = sum(1 for _,d in G_base.nodes(data=True) if d.get('infection_state') == 'infected')
+            gold_count = sum(1 for _, d in G_base.nodes(data=True) if d.get('detected'))
+            red_count  = sum(1 for _, d in G_base.nodes(data=True) if d.get('infection_state') == 'infected')
             print(f"[Viz] Infected(red)={red_count}  GNN-detected(gold)={gold_count}")
 
             visualize_graph(
                 G_base,
                 output_file=viz_path,
-                title=f"GraphShield — {scenario_name.replace('_', ' ')} (post-attack state)"
+                title=f"AEGIS — {scenario_name.replace('_', ' ')} (post-attack state)"
             )
-            print(f"[Viz] Saved → {viz_path}")
+            print(f"[Viz] Saved -> {viz_path}")
         except Exception as e:
             import traceback; traceback.print_exc()
             print(f"[Viz] Visualisation failed: {e}")

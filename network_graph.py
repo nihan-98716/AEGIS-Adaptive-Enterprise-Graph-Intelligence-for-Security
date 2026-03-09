@@ -126,7 +126,7 @@ def get_hub_nodes(G):
             if d.get('node_type') == 'controller' 
             or d.get('node_id') in ['DC-1', 'CORE-1', 'AUTH-1']]
 
-def visualize_graph(G, output_file="cyber_network.html", title="GraphShield — Enterprise Network"):
+def visualize_graph(G, output_file="cyber_network.html", title="AEGIS — Enterprise Network"):
     """
     Generates a standalone vis.js HTML network visualisation — no pyvis
     physics quirks, works in any browser without a loading bar hang.

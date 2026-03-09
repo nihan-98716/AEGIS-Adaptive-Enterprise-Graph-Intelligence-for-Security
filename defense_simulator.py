@@ -258,7 +258,7 @@ def run_defense_experiment(G, strategy_fn, attacker_mode, strategy_name, anomaly
             
             # 3. Detect
             if anomaly_detector:
-                detected_now = anomaly_detector.detect_anomalies(sim_G, threshold=0.5)
+                detected_now = anomaly_detector.detect_anomalies(sim_G, threshold=2.0)
                 detection_log.append((t, detected_now))
                 infection_log.append((t, pending_infections))
                 
