@@ -9,7 +9,7 @@ from typing import Dict, Any
 # Local Module Imports
 from config import (SIMULATION_CONFIG, ANOMALY_CONFIG, NL_REPORTING_ENABLED,
                     GNN_ANOMALY_MODE, GNN_CONFIG)
-from network_graph import generate_enterprise_graph, reset_graph
+from network_graph import generate_enterprise_graph
 from propagation_engine import run_simulation
 from risk_engine import calculate_risk_scores, get_risk_report
 from anomaly_detector import make_anomaly_detector, run_anomaly_detection_experiment
@@ -587,24 +587,13 @@ def execute_scenario_pipeline(scenario_name: str, G, entry_nodes, attacker_mode:
             viz_path = f'outputs/network_{scenario_name}.html'
             os.makedirs('outputs', exist_ok=True)
 
-            # Replay BASE sim step-by-step at threshold=2.0 (NOT 0.5).
-            # threshold=0.5 floods gold: GraphSAGE propagates anomaly signal to
-            # ALL neighbours of infected nodes, flagging most of the graph.
-            G_viz_replay = copy.deepcopy(G)
-            reset_graph(G_viz_replay)
+            # Use det_log from step [3/6] — already computed detections, no re-scoring.
+            # Re-scoring after 180 strategy runs skews GNN baseline and floods all nodes gold.
             detected_nodes = set()
-            prev_infected = set()
-            for step in base_sim_result['timestep_log']:
-                if step['phase'] == 'baseline_recording':
-                    continue
-                for n in step['newly_infected_nodes']:
-                    G_viz_replay.nodes[n]['infection_state'] = 'infected'
-                flagged = anomaly_detector.detect_anomalies(G_viz_replay, threshold=2.0)
-                early_warnings = [n for n in flagged if n not in prev_infected]
-                detected_nodes.update(early_warnings)
-                prev_infected.update(step['newly_infected_nodes'])
+            for t, flagged in det_log:
+                detected_nodes.update(flagged)
 
-            # Clear any stale detected flags on G_base, apply only fresh ones
+            # Clear any stale detected flags on G_base, apply only det_log ones
             for n in G_base.nodes():
                 G_base.nodes[n].pop('detected', None)
             for n in detected_nodes:
@@ -621,10 +610,10 @@ def execute_scenario_pipeline(scenario_name: str, G, entry_nodes, attacker_mode:
                 title=f"AEGIS — {scenario_name.replace('_', ' ')} (post-attack state)"
             )
             print(f"[Viz] Saved -> {viz_path}")
+
         except Exception as e:
             import traceback; traceback.print_exc()
             print(f"[Viz] Visualisation failed: {e}")
-
     print(f"\n[Done] Scenario {scenario_name} Complete.\n")
     return scenario_result
 
