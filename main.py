@@ -9,7 +9,7 @@ from typing import Dict, Any
 # Local Module Imports
 from config import (SIMULATION_CONFIG, ANOMALY_CONFIG, NL_REPORTING_ENABLED,
                     GNN_ANOMALY_MODE, GNN_CONFIG)
-from network_graph import generate_enterprise_graph
+from network_graph import generate_enterprise_graph, reset_graph
 from propagation_engine import run_simulation
 from risk_engine import calculate_risk_scores, get_risk_report
 from anomaly_detector import make_anomaly_detector, run_anomaly_detection_experiment
