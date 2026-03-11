@@ -16,7 +16,6 @@ from anomaly_detector import make_anomaly_detector, run_anomaly_detection_experi
 from feature_extractor import extract_training_dataset
 from report_generator import run_report_generation, ReportGenerator
 from defense_simulator import run_defense_experiment
-from ai_modules import RLDefenseAgent
 from risk_engine import plot_risk_heatmap
 from anomaly_detector import AnomalyDetector
 from defense_simulator import plot_strategy_comparison, plot_infection_curves
@@ -27,7 +26,8 @@ from defense_simulator import plot_strategy_comparison, plot_infection_curves
 # ---------------------------------------------------------------------------
 
 def generate_scenario_dashboard(scenario_name: str, strategy_df, detection_metrics: dict,
-                                 base_sim_result: dict, viz_sim_result: dict):
+                                 base_sim_result: dict, viz_sim_result: dict,
+                                 model_metrics: dict = None):
     """
     Builds a 2x2 multi-panel dashboard PNG for a single scenario and saves it
     to outputs/dashboard_{scenario_name}.png.
@@ -46,7 +46,7 @@ def generate_scenario_dashboard(scenario_name: str, strategy_df, detection_metri
     from matplotlib.patches import FancyBboxPatch
     import os
 
-    fig = plt.figure(figsize=(22, 14))
+    fig = plt.figure(figsize=(30, 14))
     fig.patch.set_facecolor("#0d1117")
 
     # Title banner
@@ -55,8 +55,8 @@ def generate_scenario_dashboard(scenario_name: str, strategy_df, detection_metri
         fontsize=22, fontweight="bold", color="white", y=0.97
     )
 
-    gs = gridspec.GridSpec(2, 2, figure=fig, hspace=0.35, wspace=0.25,
-                           left=0.04, right=0.96, top=0.92, bottom=0.04)
+    gs = gridspec.GridSpec(2, 3, figure=fig, hspace=0.35, wspace=0.28,
+                           left=0.03, right=0.97, top=0.92, bottom=0.04)
 
     def load_panel(ax, path, title):
         """Load a saved PNG into an axes panel."""
@@ -94,14 +94,62 @@ def generate_scenario_dashboard(scenario_name: str, strategy_df, detection_metri
                f"outputs/strategy_comparison_{scenario_name}.png",
                "Defense Strategy Comparison (Monte Carlo, 30 runs)")
 
-    # Panel 4 — Stats Summary (text)
-    ax4 = fig.add_subplot(gs[1, 1])
-    ax4.set_facecolor("#161b22")
-    ax4.axis("off")
-    ax4.set_title("Scenario Intelligence Summary", fontsize=13,
+    # Panel 5 — Model Metrics
+    ax5 = fig.add_subplot(gs[0, 2])
+    ax5.set_facecolor("#161b22")
+    ax5.axis("off")
+    ax5.set_title("Model Performance Metrics", fontsize=13,
                   fontweight="bold", color="white", pad=8)
 
-    # Gather stats
+    mm = model_metrics or {}
+    metric_lines = [
+        ("GNN ANOMALY DETECTOR", None, "#f5a623"),
+        ("Accuracy",        f"{mm.get('gnn_accuracy',0)*100:.1f}%",    "#ecf0f1"),
+        ("Precision",       f"{mm.get('gnn_precision',0)*100:.1f}%",   "#ecf0f1"),
+        ("Recall",          f"{mm.get('gnn_recall',0)*100:.1f}%",      "#3fb950" if mm.get('gnn_recall',0)>0.7 else "#f85149"),
+        ("F1 Score",        f"{mm.get('gnn_f1',0)*100:.1f}%",          "#3fb950" if mm.get('gnn_f1',0)>0.7 else "#f85149"),
+        ("AUC-ROC",         f"{mm.get('gnn_auc',0):.3f}",              "#3fb950" if mm.get('gnn_auc',0)>0.7 else "#f85149"),
+        ("False Pos Rate",  f"{mm.get('gnn_fpr',0)*100:.1f}%",         "#3fb950" if mm.get('gnn_fpr',0)<0.2 else "#f85149"),
+        ("TP / FP / FN",    f"{mm.get('gnn_tp',0)} / {mm.get('gnn_fp',0)} / {mm.get('gnn_fn',0)}", "#8b949e"),
+        ("", None, "white"),
+        ("RISK SCORING ENGINE", None, "#f5a623"),
+        ("Precision@5",     f"{mm.get('risk_precision_at_5',0)*100:.1f}%",  "#ecf0f1"),
+        ("Precision@10",    f"{mm.get('risk_precision_at_10',0)*100:.1f}%", "#ecf0f1"),
+        ("Precision@20",    f"{mm.get('risk_precision_at_20',0)*100:.1f}%", "#ecf0f1"),
+        ("Kendall\'s Tau", f"{mm.get('risk_kendall_tau',0):.3f}",          "#3fb950" if mm.get('risk_kendall_tau',0)>0.3 else "#8b949e"),
+        ("", None, "white"),
+        ("DQN RL AGENT", None, "#f5a623"),
+        ("Trained",         str(mm.get('dqn_trained', False)),              "#3fb950" if mm.get('dqn_trained') else "#f85149"),
+        ("Exploit Rate",    f"{mm.get('dqn_exploitation_rate',0)*100:.1f}%","#ecf0f1"),
+        ("Train Steps",     str(mm.get('dqn_train_steps', 0)),              "#8b949e"),
+        ("Tail Reward",     f"{mm.get('dqn_mean_tail_reward',0):+.3f}",     "#3fb950" if mm.get('dqn_mean_tail_reward',0)>0 else "#f85149"),
+    ]
+
+    my = 0.97
+    for label, value, color in metric_lines:
+        if label == "":
+            my -= 0.02
+            continue
+        if value is None:
+            ax5.text(0.03, my, label, transform=ax5.transAxes,
+                     fontsize=9.5, fontweight="bold", color=color, va="top",
+                     fontfamily="monospace")
+            my -= 0.042
+        else:
+            ax5.text(0.03, my, label, transform=ax5.transAxes,
+                     fontsize=9, color="#8b949e", va="top", fontfamily="monospace")
+            ax5.text(0.97, my, value, transform=ax5.transAxes,
+                     fontsize=9, color=color, va="top", ha="right",
+                     fontfamily="monospace", fontweight="bold")
+            my -= 0.046
+
+    # Panel 6 — move stats summary to gs[1,2]
+    ax4_new = fig.add_subplot(gs[1, 2])
+    ax4_new.set_facecolor("#161b22")
+    ax4_new.axis("off")
+    ax4_new.set_title("Scenario Intelligence Summary", fontsize=13,
+                      fontweight="bold", color="white", pad=8)
+
     final_rate   = base_sim_result.get("final_infection_rate", 0) * 100
     viz_rate     = viz_sim_result.get("final_infection_rate", 0) * 100
     velocity     = base_sim_result.get("spread_velocity", 0)
@@ -111,57 +159,49 @@ def generate_scenario_dashboard(scenario_name: str, strategy_df, detection_metri
     lead_time    = detection_metrics.get("detection_lead_time_mean", 0)
     tpr          = detection_metrics.get("true_positive_rate", 0) * 100
     fdr          = detection_metrics.get("false_positive_rate", 0) * 100
+    best_row2    = strategy_df.sort_values("mean_infection_rate").iloc[0]
+    worst_row2   = strategy_df.sort_values("mean_infection_rate").iloc[-1]
+    best_strat2  = best_row2["strategy_name"]
+    best_rate2   = best_row2["mean_infection_rate"] * 100
+    worst_rate2  = worst_row2["mean_infection_rate"] * 100
+    reduction2   = worst_rate2 - best_rate2
 
-    best_row   = strategy_df.sort_values("mean_infection_rate").iloc[0]
-    worst_row  = strategy_df.sort_values("mean_infection_rate").iloc[-1]
-    best_strat = best_row["strategy_name"]
-    best_rate  = best_row["mean_infection_rate"] * 100
-    worst_rate = worst_row["mean_infection_rate"] * 100
-    reduction  = worst_rate - best_rate
-
-    lines = [
+    sum_lines = [
         ("ATTACK METRICS", None, "#58a6ff"),
-        (f"Base infection rate",      f"{final_rate:.1f}%",       "white"),
-        (f"Viz spread (beta=0.85)",   f"{viz_rate:.1f}%",         "#8b949e"),
-        (f"Spread velocity",          f"{velocity:.2f} nodes/step","white"),
-        (f"Time to critical node",    t_crit_str,                  "white"),
-        (f"Attack stages reached",    str(len(stages)),            "white"),
+        (f"Base infection rate",    f"{final_rate:.1f}%",        "white"),
+        (f"Spread velocity",        f"{velocity:.2f} nodes/step","white"),
+        (f"Time to critical node",  t_crit_str,                  "white"),
+        (f"Attack stages reached",  str(len(stages)),            "white"),
         ("", None, "white"),
         ("GNN DETECTION", None, "#58a6ff"),
-        (f"Detection lead time",      f"+{lead_time:.1f} steps",  "#3fb950" if lead_time > 0 else "#f85149"),
-        (f"True positive rate",       f"{tpr:.1f}%",              "#3fb950" if tpr > 80 else "#f85149"),
-        (f"False discovery rate",     f"{fdr:.1f}%",              "#3fb950" if fdr < 20 else "#f85149"),
+        (f"Detection lead time",    f"+{lead_time:.1f} steps",   "#3fb950" if lead_time>0 else "#f85149"),
+        (f"True positive rate",     f"{tpr:.1f}%",               "#3fb950" if tpr>80 else "#f85149"),
+        (f"False discovery rate",   f"{fdr:.1f}%",               "#3fb950" if fdr<20 else "#f85149"),
         ("", None, "white"),
         ("DEFENSE OUTCOME", None, "#58a6ff"),
-        (f"Best strategy",            best_strat,                 "#3fb950"),
-        (f"Best infection rate",      f"{best_rate:.1f}%",        "#3fb950"),
-        (f"Worst infection rate",     f"{worst_rate:.1f}%",       "#f85149"),
-        (f"Reduction achieved",       f"{reduction:.1f}%",        "#3fb950"),
+        (f"Best strategy",          best_strat2,                 "#3fb950"),
+        (f"Best infection rate",    f"{best_rate2:.1f}%",        "#3fb950"),
+        (f"Worst infection rate",   f"{worst_rate2:.1f}%",       "#f85149"),
+        (f"Reduction achieved",     f"{reduction2:.1f}%",        "#3fb950"),
     ]
 
-    y = 0.96
-    for label, value, color in lines:
-        if label == "" :
-            y -= 0.025
+    sy = 0.97
+    for label, value, color in sum_lines:
+        if label == "":
+            sy -= 0.025
             continue
         if value is None:
-            # Section header
-            ax4.text(0.04, y, label, transform=ax4.transAxes,
-                     fontsize=10, fontweight="bold", color=color, va="top",
-                     fontfamily="monospace")
-            y -= 0.045
+            ax4_new.text(0.04, sy, label, transform=ax4_new.transAxes,
+                         fontsize=10, fontweight="bold", color=color, va="top",
+                         fontfamily="monospace")
+            sy -= 0.045
         else:
-            ax4.text(0.04, y, label, transform=ax4.transAxes,
-                     fontsize=9.5, color="#8b949e", va="top", fontfamily="monospace")
-            ax4.text(0.96, y, value, transform=ax4.transAxes,
-                     fontsize=9.5, color=color, va="top", ha="right",
-                     fontfamily="monospace", fontweight="bold")
-            y -= 0.052
-
-    # Subtle border on stats panel
-    for spine in ax4.spines.values():
-        spine.set_edgecolor("#30363d")
-        spine.set_linewidth(1)
+            ax4_new.text(0.04, sy, label, transform=ax4_new.transAxes,
+                         fontsize=9.5, color="#8b949e", va="top", fontfamily="monospace")
+            ax4_new.text(0.96, sy, value, transform=ax4_new.transAxes,
+                         fontsize=9.5, color=color, va="top", ha="right",
+                         fontfamily="monospace", fontweight="bold")
+            sy -= 0.052
 
     out_path = f"outputs/dashboard_{scenario_name}.png"
     plt.savefig(out_path, dpi=150, bbox_inches="tight",
@@ -171,9 +211,134 @@ def generate_scenario_dashboard(scenario_name: str, strategy_df, detection_metri
     return out_path
 
 
+
+# ---------------------------------------------------------------------------
+# Model Metrics Computation
+# ---------------------------------------------------------------------------
+
+def compute_model_metrics(det_log, inf_log, G_base, risk_df, rl_agent=None):
+    """
+    Computes classification and ranking metrics for GNN, Risk Engine, and DQN.
+    Returns a flat dict of all metrics.
+    """
+    import numpy as np
+    from sklearn.metrics import (accuracy_score, precision_score,
+                                  recall_score, f1_score, roc_auc_score)
+
+    metrics = {}
+    nodes = sorted(G_base.nodes())
+    n = len(nodes)
+
+    # ── GNN Anomaly Detector ─────────────────────────────────────────────────
+    # Build ground-truth: was each node ever infected during the sim?
+    ever_infected = set()
+    for t, newly in inf_log:
+        ever_infected.update(newly)
+
+    # Build predicted: was each node ever flagged by GNN?
+    ever_detected = set()
+    for t, flagged in det_log:
+        ever_detected.update(flagged)
+
+    if ever_infected:
+        y_true = np.array([1 if nd in ever_infected  else 0 for nd in nodes])
+        y_pred = np.array([1 if nd in ever_detected  else 0 for nd in nodes])
+
+        tp = int(np.sum((y_true == 1) & (y_pred == 1)))
+        fp = int(np.sum((y_true == 0) & (y_pred == 1)))
+        tn = int(np.sum((y_true == 0) & (y_pred == 0)))
+        fn = int(np.sum((y_true == 1) & (y_pred == 0)))
+
+        metrics['gnn_accuracy']  = round(accuracy_score(y_true, y_pred), 4)
+        metrics['gnn_precision'] = round(precision_score(y_true, y_pred, zero_division=0), 4)
+        metrics['gnn_recall']    = round(recall_score(y_true, y_pred, zero_division=0), 4)
+        f1 = f1_score(y_true, y_pred, zero_division=0)
+        metrics['gnn_f1']        = round(f1, 4)
+        metrics['gnn_fpr']       = round(fp / max(fp + tn, 1), 4)
+        metrics['gnn_tp']        = tp
+        metrics['gnn_fp']        = fp
+        metrics['gnn_tn']        = tn
+        metrics['gnn_fn']        = fn
+        # AUC: use anomaly scores as soft probability if available
+        scores = np.array([float(G_base.nodes[nd].get('anomaly_score', 0.0)) for nd in nodes])
+        if scores.max() > 0 and len(np.unique(y_true)) > 1:
+            scores_norm = scores / (scores.max() + 1e-9)
+            try:
+                metrics['gnn_auc'] = round(roc_auc_score(y_true, scores_norm), 4)
+            except Exception:
+                metrics['gnn_auc'] = 0.0
+        else:
+            metrics['gnn_auc'] = 0.0
+    else:
+        for k in ['gnn_accuracy','gnn_precision','gnn_recall','gnn_f1',
+                  'gnn_fpr','gnn_auc','gnn_tp','gnn_fp','gnn_tn','gnn_fn']:
+            metrics[k] = 0.0
+
+    # ── Risk Scoring Engine ──────────────────────────────────────────────────
+    # Precision@K: fraction of top-K risk nodes that were actually infected
+    for k in [5, 10, 20]:
+        top_k = risk_df.head(k)['node_id'].tolist()
+        infected_ids = set(G_base.nodes[nd].get('node_id') for nd in ever_infected)
+        hits = sum(1 for nid in top_k if nid in infected_ids)
+        metrics[f'risk_precision_at_{k}'] = round(hits / k, 4)
+
+    # Kendall's Tau: rank correlation between risk score rank and infection order
+    infection_order = {}
+    for t, newly in inf_log:
+        for nd in newly:
+            if nd not in infection_order:
+                infection_order[nd] = t
+
+    risk_ranks  = {row['node_id']: i for i, row in risk_df.reset_index(drop=True).iterrows()}
+    common_ids  = [G_base.nodes[nd].get('node_id') for nd in nodes
+                   if G_base.nodes[nd].get('node_id') in infection_order
+                   and G_base.nodes[nd].get('node_id') in risk_ranks]
+    if len(common_ids) >= 3:
+        from scipy.stats import kendalltau
+        r_ranks = [risk_ranks[nid] for nid in common_ids]
+        i_ranks = [infection_order[G_base.nodes[
+                       next(nd for nd in nodes
+                            if G_base.nodes[nd].get('node_id') == nid)].get('node_id')]
+                   for nid in common_ids]
+        tau, _ = kendalltau(r_ranks, i_ranks)
+        metrics['risk_kendall_tau'] = round(float(tau), 4)
+    else:
+        metrics['risk_kendall_tau'] = 0.0
+
+    # ── DQN RL Agent ─────────────────────────────────────────────────────────
+    if rl_agent is not None and rl_agent.is_trained:
+        metrics['dqn_trained']          = True
+        metrics['dqn_epsilon']          = round(float(rl_agent.epsilon), 4)
+        metrics['dqn_exploitation_rate']= round(1.0 - float(rl_agent.epsilon), 4)
+        metrics['dqn_replay_size']      = len(rl_agent._replay)
+        metrics['dqn_train_steps']      = int(rl_agent._step)
+        # Mean reward from last 10% of replay buffer as proxy for converged performance
+        if rl_agent._replay:
+            tail = rl_agent._replay[int(len(rl_agent._replay)*0.9):]
+            metrics['dqn_mean_tail_reward'] = round(float(np.mean([r for _,_,r,_,_ in tail])), 4)
+        else:
+            metrics['dqn_mean_tail_reward'] = 0.0
+    else:
+        for k in ['dqn_trained','dqn_epsilon','dqn_exploitation_rate',
+                  'dqn_replay_size','dqn_train_steps','dqn_mean_tail_reward']:
+            metrics[k] = 0.0
+
+    return metrics
+
+
+def save_model_metrics_csv(all_scenario_metrics: list):
+    """Saves per-scenario model metrics to outputs/model_metrics.csv."""
+    import pandas as pd, os
+    os.makedirs('outputs', exist_ok=True)
+    df = pd.DataFrame(all_scenario_metrics)
+    df.to_csv('outputs/model_metrics.csv', index=False)
+    print("  -> Saved outputs/model_metrics.csv")
+    return df
+
+
 def execute_scenario_pipeline(scenario_name: str, G, entry_nodes, attacker_mode: str, beta: float, 
                              anomaly_detector: AnomalyDetector, report_gen: ReportGenerator, skip_report: bool,
-                             rl_agent=None, visualize: bool = False) -> Dict[str, Any]:
+                             visualize: bool = False) -> Dict[str, Any]:
     """
     Executes the standard 8-step pipeline for any given attack scenario mapping.
     """
@@ -266,21 +431,6 @@ def execute_scenario_pipeline(scenario_name: str, G, entry_nodes, attacker_mode:
         detection_metrics = anomaly_detector.compute_detection_metrics(det_log, inf_log)
         print(f"      -> Detection Lead Time: {detection_metrics.get('detection_lead_time_mean', 0.0):.2f} timesteps")
         print(f"      -> True Positive Rate:  {detection_metrics.get('true_positive_rate', 0.0)*100:.1f}%")
-
-        # Write final GNN anomaly scores back to G_base for tooltip display
-        # Score from a clean base-sim replay (low beta) not viz sim (high beta)
-        # so only truly anomalous nodes score high, not the whole infected graph.
-        import copy as _sc; from network_graph import reset_graph as _rsg
-        G_score_replay = _sc.deepcopy(G); _rsg(G_score_replay)
-        for _step in base_sim_result['timestep_log']:
-            if _step['phase'] == 'baseline_recording': continue
-            for _n in _step['newly_infected_nodes']:
-                G_score_replay.nodes[_n]['infection_state'] = 'infected'
-        final_scores = anomaly_detector.score_nodes(G_score_replay)
-        for n, score in final_scores.items():
-            if n in G_base.nodes:
-                G_base.nodes[n]['anomaly_score'] = round(float(score), 3)
-
     except Exception as e:
         import traceback; traceback.print_exc()
         print(f"      -> Anomaly eval failed: {e}")
@@ -291,9 +441,12 @@ def execute_scenario_pipeline(scenario_name: str, G, entry_nodes, attacker_mode:
     print("[4/6] Computing static + dynamic Risk scoring...")
     calculate_risk_scores(G_base)
     risk_df = get_risk_report(G_base)
+
+    # 4b. Model metrics (GNN + Risk Engine + DQN)
+    model_metrics = compute_model_metrics(det_log, inf_log, G_base, risk_df, rl_agent=rl_agent)
     
     # 5. Multiprocessing Defense Comparisons
-    strategies = ["none", "random", "patch_vulnerable", "patch_centrality", "isolate_bridges", "anomaly_guided", "rl_agent"]
+    strategies = ["none", "random", "patch_vulnerable", "patch_centrality", "isolate_bridges", "anomaly_guided"]
     comparison_results = []
     
     print("[5/6] Executing Defense Comparisons using ProcessPoolExecutor...")
@@ -306,7 +459,6 @@ def execute_scenario_pipeline(scenario_name: str, G, entry_nodes, attacker_mode:
             attacker_mode=attacker_mode,
             strategy_name=strategy,
             anomaly_detector=anomaly_detector,
-            rl_agent=rl_agent,
             n_runs=n_runs,
             initial_node=entry_nodes[0] if entry_nodes else None,
             max_timesteps=max_steps,
@@ -346,7 +498,7 @@ def execute_scenario_pipeline(scenario_name: str, G, entry_nodes, attacker_mode:
         # ----------------------------------------------------------------
         fig = plt.figure(figsize=(20, 14), facecolor=_DARK)
         fig.suptitle(
-            f"AEGIS — Scenario: {scenario_name.replace('_', ' ')}",
+            f"GraphShield — Scenario: {scenario_name.replace('_', ' ')}",
             fontsize=20, fontweight='bold', color=_TEXT, y=0.98
         )
 
@@ -557,6 +709,7 @@ def execute_scenario_pipeline(scenario_name: str, G, entry_nodes, attacker_mode:
             detection_metrics,
             base_sim_result,
             viz_sim_result,
+            model_metrics=model_metrics,
         )
         print(f"      -> All charts saved to outputs/")
 
@@ -590,7 +743,8 @@ def execute_scenario_pipeline(scenario_name: str, G, entry_nodes, attacker_mode:
         'risk_df': risk_df,
         'strategy_comparison': strategy_df,
         'features_df': features_df,
-        'labels_df': labels_df
+        'labels_df': labels_df,
+        'model_metrics': model_metrics
     }
     
     # Output to CSV 
@@ -604,39 +758,36 @@ def execute_scenario_pipeline(scenario_name: str, G, entry_nodes, attacker_mode:
             viz_path = f'outputs/network_{scenario_name}.html'
             os.makedirs('outputs', exist_ok=True)
 
-            # Gold nodes = direct susceptible neighbours of infected nodes in base sim.
-            # Do NOT use GNN scoring — GraphSAGE floods the entire graph due to
-            # neighbourhood aggregation. Topology-based at-risk is accurate and sparse.
-            infected_in_base = set(
-                n for n, d in G_base.nodes(data=True)
-                if d.get('infection_state') == 'infected'
-            )
-            at_risk_nodes = set()
-            for inf_node in infected_in_base:
-                for nbr in G_base.neighbors(inf_node):
-                    if G_base.nodes[nbr].get('infection_state') != 'infected':
-                        at_risk_nodes.add(nbr)
+            # Build detected set from base sim (low beta) not viz sim (high beta)
+            # This gives meaningful gold nodes rather than flagging the whole graph
+            G_viz_replay = copy.deepcopy(G)
+            reset_graph(G_viz_replay)
+            detected_nodes = set()
+            for step in base_sim_result['timestep_log']:
+                if step['phase'] == 'baseline_recording':
+                    continue
+                for n in step['newly_infected_nodes']:
+                    G_viz_replay.nodes[n]['infection_state'] = 'infected'
+                flagged = anomaly_detector.detect_anomalies(G_viz_replay, threshold=0.5)
+                detected_nodes.update(flagged)
 
-            # Clear stale flags, apply fresh at-risk flags
-            for n in G_base.nodes():
-                G_base.nodes[n].pop('detected', None)
-            for n in at_risk_nodes:
-                G_base.nodes[n]['detected'] = True
-
-            gold_count = len(at_risk_nodes)
-            red_count  = len(infected_in_base)
-            print(f"[Viz] Infected(red)={red_count}  At-risk neighbours(gold)={gold_count}")
+            # Only mark detected on nodes NOT already showing as infected
+            for n in detected_nodes:
+                if n in G_base.nodes and G_base.nodes[n].get('infection_state') != 'infected':
+                    G_base.nodes[n]['detected'] = True
 
             visualize_graph(
                 G_base,
                 output_file=viz_path,
-                title=f"AEGIS — {scenario_name.replace('_', ' ')} (post-attack state)"
+                title=f"GraphShield — {scenario_name.replace('_', ' ')} (post-attack state)"
             )
-            print(f"[Viz] Saved -> {viz_path}")
-
+            print(f"[Viz] Interactive network saved → {viz_path}  ({len(detected_nodes)} nodes GNN-flagged)")
         except Exception as e:
-            import traceback; traceback.print_exc()
             print(f"[Viz] Visualisation failed: {e}")
+            print(f"[Viz] Interactive network saved → {viz_path}")
+        except Exception as e:
+            print(f"[Viz] Visualisation failed: {e}")
+
     print(f"\n[Done] Scenario {scenario_name} Complete.\n")
     return scenario_result
 
@@ -644,28 +795,28 @@ def execute_scenario_pipeline(scenario_name: str, G, entry_nodes, attacker_mode:
 # Scenario Definitions
 # ---------------------------------------------------------
 
-def scenario_random_workstation(G, anomaly_detector, report_gen, skip_report, rl_agent=None, visualize=False):
+def scenario_random_workstation(G, anomaly_detector, report_gen, skip_report, visualize=False):
     workstations = [n for n, d in G.nodes(data=True) if d.get('node_type') == 'workstation']
     entry = [random.choice(workstations)] if workstations else [list(G.nodes())[0]]
-    return execute_scenario_pipeline("Random_Workstation", G, entry, "random", 0.3, anomaly_detector, report_gen, skip_report, rl_agent=rl_agent, visualize=visualize)
+    return execute_scenario_pipeline("Random_Workstation", G, entry, "random", 0.3, anomaly_detector, report_gen, skip_report, visualize=visualize)
 
-def scenario_targeted_finance(G, anomaly_detector, report_gen, skip_report, rl_agent=None, visualize=False):
+def scenario_targeted_finance(G, anomaly_detector, report_gen, skip_report, visualize=False):
     finance_nodes = [n for n, d in G.nodes(data=True) if d.get('department') == 'Finance']
     if finance_nodes:
         best_finance = max(finance_nodes, key=lambda n: G.nodes[n].get('asset_value', 0))
         entry = [best_finance]
     else:
         entry = [list(G.nodes())[0]]
-    return execute_scenario_pipeline("Targeted_Finance", G, entry, "greedy", 0.3, anomaly_detector, report_gen, skip_report, rl_agent=rl_agent, visualize=visualize)
+    return execute_scenario_pipeline("Targeted_Finance", G, entry, "greedy", 0.3, anomaly_detector, report_gen, skip_report, visualize=visualize)
 
-def scenario_domain_controller(G, anomaly_detector, report_gen, skip_report, rl_agent=None, visualize=False):
+def scenario_domain_controller(G, anomaly_detector, report_gen, skip_report, visualize=False):
     servers = [n for n, d in G.nodes(data=True) if d.get('node_type') == 'server' and d.get('privilege_level') == 'domain_admin']
     entry = [servers[0]] if servers else [list(G.nodes())[0]]
-    return execute_scenario_pipeline("Domain_Controller", G, entry, "greedy", 0.4, anomaly_detector, report_gen, skip_report, rl_agent=rl_agent, visualize=visualize)
+    return execute_scenario_pipeline("Domain_Controller", G, entry, "greedy", 0.4, anomaly_detector, report_gen, skip_report, visualize=visualize)
 
-def scenario_stealth(G, anomaly_detector, report_gen, skip_report, rl_agent=None, visualize=False):
+def scenario_stealth(G, anomaly_detector, report_gen, skip_report, visualize=False):
     entry = [random.choice(list(G.nodes()))]
-    return execute_scenario_pipeline("Stealth", G, entry, "stealth", 0.1, anomaly_detector, report_gen, skip_report, rl_agent=rl_agent, visualize=visualize)
+    return execute_scenario_pipeline("Stealth", G, entry, "stealth", 0.1, anomaly_detector, report_gen, skip_report, visualize=visualize)
 
 # ---------------------------------------------------------
 # Pipeline Executions
@@ -689,21 +840,14 @@ def run_full_pipeline(skip_report: bool, visualize: bool = False):
         epochs=GNN_CONFIG['epochs'],
         use_gnn=GNN_ANOMALY_MODE,
     )
-    report_gen = ReportGenerator(model_name="mistral")
-
-    print("Initialize DQN RL defense agent...")
-    rl_agent = RLDefenseAgent(n_nodes=G.number_of_nodes(), budget=5)
-    if not rl_agent.load():
-        rl_agent.train(G, attacker_mode='random', beta=0.3, episodes=60)
-        rl_agent.save()
-    print(f"  [DQN] Agent ready (epsilon={rl_agent.epsilon:.3f})") 
+    report_gen = ReportGenerator(model_name="mistral") 
 
     all_results = []
     
-    all_results.append(scenario_random_workstation(G, anomaly_detector, report_gen, skip_report, rl_agent=rl_agent, visualize=visualize))
-    all_results.append(scenario_targeted_finance(G, anomaly_detector, report_gen, skip_report, rl_agent=rl_agent, visualize=visualize))
-    all_results.append(scenario_domain_controller(G, anomaly_detector, report_gen, skip_report, rl_agent=rl_agent, visualize=visualize))
-    all_results.append(scenario_stealth(G, anomaly_detector, report_gen, skip_report, rl_agent=rl_agent, visualize=visualize))
+    all_results.append(scenario_random_workstation(G, anomaly_detector, report_gen, skip_report, visualize=visualize))
+    all_results.append(scenario_targeted_finance(G, anomaly_detector, report_gen, skip_report, visualize=visualize))
+    all_results.append(scenario_domain_controller(G, anomaly_detector, report_gen, skip_report, visualize=visualize))
+    all_results.append(scenario_stealth(G, anomaly_detector, report_gen, skip_report, visualize=visualize))
     
     print("\n" + "="*80)
     print("FINAL ENTERPRISE SIMULATION SUMMARY")
@@ -753,6 +897,38 @@ def run_full_pipeline(skip_report: bool, visualize: bool = False):
     except Exception as e:
         print(f"Cross-scenario chart failed: {e}")
 
+    # ── Model Metrics: console + CSV ──────────────────────────────────────
+    print("\n" + "="*80)
+    print("MODEL PERFORMANCE METRICS")
+    print("="*80)
+
+    all_mm = []
+    for sr in all_results:
+        mm = sr.get('model_metrics', {})
+        sname = sr['scenario_name']
+        mm['scenario'] = sname
+        all_mm.append(mm)
+        print(f"\n  Scenario: {sname}")
+        print(f"  GNN  | Acc={mm.get('gnn_accuracy',0)*100:.1f}%  "
+              f"Prec={mm.get('gnn_precision',0)*100:.1f}%  "
+              f"Rec={mm.get('gnn_recall',0)*100:.1f}%  "
+              f"F1={mm.get('gnn_f1',0)*100:.1f}%  "
+              f"AUC={mm.get('gnn_auc',0):.3f}  "
+              f"FPR={mm.get('gnn_fpr',0)*100:.1f}%")
+        print(f"  Risk | P@5={mm.get('risk_precision_at_5',0)*100:.1f}%  "
+              f"P@10={mm.get('risk_precision_at_10',0)*100:.1f}%  "
+              f"P@20={mm.get('risk_precision_at_20',0)*100:.1f}%  "
+              f"Tau={mm.get('risk_kendall_tau',0):.3f}")
+        print(f"  DQN  | Trained={mm.get('dqn_trained',False)}  "
+              f"ExploitRate={mm.get('dqn_exploitation_rate',0)*100:.1f}%  "
+              f"Steps={mm.get('dqn_train_steps',0)}  "
+              f"TailReward={mm.get('dqn_mean_tail_reward',0):+.3f}")
+
+    try:
+        save_model_metrics_csv(all_mm)
+    except Exception as e:
+        print(f"  -> CSV export failed: {e}")
+
     print("\nAll tasks completed. Charts and logs exported to outputs/ directory.")
 
 
@@ -787,17 +963,12 @@ if __name__ == "__main__":
              use_gnn=GNN_ANOMALY_MODE,
          )
          report_gen = ReportGenerator(model_name="mistral")
-
-         rl_agent = RLDefenseAgent(n_nodes=G.number_of_nodes(), budget=5)
-         if not rl_agent.load():
-             rl_agent.train(G, attacker_mode='random', beta=0.3, episodes=60)
-             rl_agent.save()
-
+         
          if args.scenario == "random":
-             scenario_random_workstation(G, anomaly_detector, report_gen, skip_report=args.no_report, rl_agent=rl_agent, visualize=args.visualize)
+             scenario_random_workstation(G, anomaly_detector, report_gen, skip_report=args.no_report, visualize=args.visualize)
          elif args.scenario == "finance":
-             scenario_targeted_finance(G, anomaly_detector, report_gen, skip_report=args.no_report, rl_agent=rl_agent, visualize=args.visualize)
+             scenario_targeted_finance(G, anomaly_detector, report_gen, skip_report=args.no_report, visualize=args.visualize)
          elif args.scenario == "dc":
-             scenario_domain_controller(G, anomaly_detector, report_gen, skip_report=args.no_report, rl_agent=rl_agent, visualize=args.visualize)
+             scenario_domain_controller(G, anomaly_detector, report_gen, skip_report=args.no_report, visualize=args.visualize)
          elif args.scenario == "stealth":
-             scenario_stealth(G, anomaly_detector, report_gen, skip_report=args.no_report, rl_agent=rl_agent, visualize=args.visualize)
+             scenario_stealth(G, anomaly_detector, report_gen, skip_report=args.no_report, visualize=args.visualize)
