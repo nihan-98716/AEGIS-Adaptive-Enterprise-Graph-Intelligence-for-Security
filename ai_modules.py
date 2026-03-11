@@ -429,7 +429,7 @@ class RLDefenseAgent:
 
     def __init__(self, n_nodes=103, budget=5, lr=5e-4,
                  gamma=0.95, epsilon=1.0, epsilon_min=0.05,
-                 epsilon_decay=0.97, replay_size=2000,
+                 epsilon_decay=0.92, replay_size=2000,
                  batch_size=64, target_sync=10, seed=42):
 
         self.n_nodes      = n_nodes
