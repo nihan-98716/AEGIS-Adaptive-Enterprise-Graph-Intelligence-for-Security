@@ -568,8 +568,6 @@ class RLDefenseAgent:
         self._step += 1
         if self._step % self.target_sync == 0:
             self._sync_target()
-        self.epsilon = max(self.epsilon_min,
-                           self.epsilon * self.epsilon_decay)
         return total_loss / self.batch_size
 
     # ------------------------------------------------------------------
@@ -664,6 +662,9 @@ class RLDefenseAgent:
                                for nb in sim_G.neighbors(n))
                            for n in infected_check):
                     break
+
+            # Decay epsilon once per episode
+            self.epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)
 
             if (ep + 1) % 10 == 0:
                 inf_rate = sum(1 for n in nodes

@@ -447,7 +447,7 @@ def execute_scenario_pipeline(scenario_name: str, G, entry_nodes, attacker_mode:
     model_metrics = compute_model_metrics(det_log, inf_log, G_base, risk_df, rl_agent=rl_agent)
     
     # 5. Multiprocessing Defense Comparisons
-    strategies = ["none", "random", "patch_vulnerable", "patch_centrality", "isolate_bridges", "anomaly_guided", "rl_agent"]
+    strategies = ["none", "random", "patch_vulnerable", "patch_centrality", "isolate_chokepoints", "anomaly_guided", "rl_agent"]
     comparison_results = []
     
     print("[5/6] Executing Defense Comparisons using ProcessPoolExecutor...")
@@ -841,14 +841,26 @@ def run_full_pipeline(skip_report: bool, visualize: bool = False):
         epochs=GNN_CONFIG['epochs'],
         use_gnn=GNN_ANOMALY_MODE,
     )
-    report_gen = ReportGenerator(model_name="mistral") 
+    report_gen = ReportGenerator(model_name="mistral")
+
+    # Train one DQN agent per attacker mode so each is optimised for its scenario
+    print("Initialize DQN RL defense agents (one per attacker mode)...")
+    rl_agents = {}
+    for mode, beta in [('random', 0.3), ('greedy', 0.4), ('stealth', 0.1)]:
+        agent = RLDefenseAgent(n_nodes=G.number_of_nodes(), budget=5)
+        agent.SAVE_PATH = f'models/rl_agent_{mode}'
+        if not agent.load():
+            agent.train(G, attacker_mode=mode, beta=beta, episodes=60)
+            agent.save()
+        rl_agents[mode] = agent
+        print(f"  [DQN] {mode} agent ready (epsilon={agent.epsilon:.3f})")
 
     all_results = []
-    
-    all_results.append(scenario_random_workstation(G, anomaly_detector, report_gen, skip_report, visualize=visualize))
-    all_results.append(scenario_targeted_finance(G, anomaly_detector, report_gen, skip_report, visualize=visualize))
-    all_results.append(scenario_domain_controller(G, anomaly_detector, report_gen, skip_report, visualize=visualize))
-    all_results.append(scenario_stealth(G, anomaly_detector, report_gen, skip_report, visualize=visualize))
+
+    all_results.append(scenario_random_workstation(G, anomaly_detector, report_gen, skip_report, rl_agent=rl_agents['random'], visualize=visualize))
+    all_results.append(scenario_targeted_finance(G, anomaly_detector, report_gen, skip_report, rl_agent=rl_agents['greedy'], visualize=visualize))
+    all_results.append(scenario_domain_controller(G, anomaly_detector, report_gen, skip_report, rl_agent=rl_agents['greedy'], visualize=visualize))
+    all_results.append(scenario_stealth(G, anomaly_detector, report_gen, skip_report, rl_agent=rl_agents['stealth'], visualize=visualize))
     
     print("\n" + "="*80)
     print("FINAL ENTERPRISE SIMULATION SUMMARY")
@@ -929,6 +941,82 @@ def run_full_pipeline(skip_report: bool, visualize: bool = False):
         save_model_metrics_csv(all_mm)
     except Exception as e:
         print(f"  -> CSV export failed: {e}")
+
+    # ── Final summary CSV ────────────────────────────────────────────────
+    try:
+        import pandas as pd
+        summary_rows = []
+        for sr in all_results:
+            strat_df = sr['strategy_comparison']
+            for _, row in strat_df.iterrows():
+                summary_rows.append({
+                    'scenario':           sr['scenario_name'],
+                    'strategy':           row['strategy_name'],
+                    'mean_infection_rate':round(row['mean_infection_rate'], 4),
+                    'std_infection_rate': round(row.get('std_infection_rate', 0), 4),
+                    'base_infection_rate':round(sr['base_simulation']['final_infection_rate'], 4),
+                    'detection_lead_time':round(sr['detection_metrics'].get('detection_lead_time_mean', 0), 2),
+                    'true_positive_rate': round(sr['detection_metrics'].get('true_positive_rate', 0), 4),
+                })
+        pd.DataFrame(summary_rows).to_csv('outputs/final_summary.csv', index=False)
+        print("  -> Saved outputs/final_summary.csv")
+    except Exception as e:
+        print(f"  -> Final summary CSV failed: {e}")
+
+    # ── Cross-scenario model metrics chart ───────────────────────────────
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        import numpy as np
+
+        scenarios = [sr['scenario_name'] for sr in all_results]
+        gnn_f1    = [sr.get('model_metrics', {}).get('gnn_f1',    0) * 100 for sr in all_results]
+        gnn_auc   = [sr.get('model_metrics', {}).get('gnn_auc',   0) * 100 for sr in all_results]
+        gnn_rec   = [sr.get('model_metrics', {}).get('gnn_recall', 0) * 100 for sr in all_results]
+        risk_p10  = [sr.get('model_metrics', {}).get('risk_precision_at_10', 0) * 100 for sr in all_results]
+
+        x = np.arange(len(scenarios))
+        w = 0.2
+        fig, ax = plt.subplots(figsize=(13, 6))
+        fig.patch.set_facecolor('#0d1117')
+        ax.set_facecolor('#161b22')
+
+        bars = [
+            (gnn_f1,   '#f5a623', 'GNN F1'),
+            (gnn_auc,  '#58a6ff', 'GNN AUC-ROC'),
+            (gnn_rec,  '#3fb950', 'GNN Recall'),
+            (risk_p10, '#a855f7', 'Risk P@10'),
+        ]
+        for i, (vals, color, label) in enumerate(bars):
+            rects = ax.bar(x + (i - 1.5) * w, vals, w, label=label,
+                           color=color, alpha=0.85, edgecolor='#30363d')
+            for rect in rects:
+                h = rect.get_height()
+                if h > 0:
+                    ax.text(rect.get_x() + rect.get_width()/2, h + 1,
+                            f'{h:.0f}%', ha='center', va='bottom',
+                            color='white', fontsize=7.5, fontfamily='monospace')
+
+        ax.set_xticks(x)
+        ax.set_xticklabels([s.replace('_', '\n') for s in scenarios],
+                           color='white', fontsize=10)
+        ax.set_ylabel('Score (%)', color='white', fontsize=11)
+        ax.set_title('AEGIS — Cross-Scenario Model Performance',
+                     color='white', fontsize=14, fontweight='bold', pad=12)
+        ax.set_ylim(0, 115)
+        ax.tick_params(colors='white')
+        ax.spines[:].set_color('#30363d')
+        ax.legend(facecolor='#161b22', edgecolor='#30363d',
+                  labelcolor='white', fontsize=9)
+        ax.grid(axis='y', color='#30363d', linewidth=0.5)
+        plt.tight_layout()
+        plt.savefig('outputs/cross_scenario_metrics.png', dpi=150,
+                    bbox_inches='tight', facecolor=fig.get_facecolor())
+        plt.close(fig)
+        print("  -> Saved outputs/cross_scenario_metrics.png")
+    except Exception as e:
+        print(f"  -> Cross-scenario metrics chart failed: {e}")
 
     print("\nAll tasks completed. Charts and logs exported to outputs/ directory.")
 

@@ -55,49 +55,34 @@ def strategy_patch_centrality(G, budget):
         
     return to_patch
 
-def strategy_isolate_bridges(G, budget):
+def strategy_isolate_chokepoints(G, budget):
     """
-    Patch susceptible nodes that sit on or near bridge edges — nodes whose removal
-    would disconnect the graph. Prioritised by betweenness centrality so we cut
-    the highest-traffic chokepoints first.  Falls back to high-betweenness
-    susceptible nodes when no bridge nodes remain.
+    Identify bridge edges, remove edges connected to highest betweenness nodes, up to budget limit.
+    A budget action here is an edge removal.
     """
-    calculate_risk_scores(G)
     actions_taken = []
-
-    # Collect susceptible nodes that are endpoints of bridge edges
-    try:
-        bridge_nodes = set()
-        for u, v in nx.bridges(G):
-            if G.nodes[u].get('infection_state') == 'susceptible':
-                bridge_nodes.add(u)
-            if G.nodes[v].get('infection_state') == 'susceptible':
-                bridge_nodes.add(v)
-    except Exception:
-        bridge_nodes = set()
-
-    # Sort bridge nodes by betweenness descending
-    candidates = sorted(
-        bridge_nodes,
-        key=lambda n: G.nodes[n].get('betweenness_centrality', 0.0),
-        reverse=True
-    )
-
-    # Fallback: if fewer bridge nodes than budget, top up with high-betweenness susceptible nodes
-    if len(candidates) < budget:
-        extra = [
-            n for n, d in G.nodes(data=True)
-            if d.get('infection_state') == 'susceptible' and n not in bridge_nodes
-        ]
-        extra.sort(key=lambda n: G.nodes[n].get('betweenness_centrality', 0.0), reverse=True)
-        candidates = candidates + extra
-
-    to_patch = candidates[:budget]
-    for n in to_patch:
-        G.nodes[n]['infection_state'] = 'patched'
-        G.nodes[n]['vulnerability_score'] = 0.0
-        actions_taken.append(n)
-
+    
+    # Needs metrics updated to know highest betweenness
+    calculate_risk_scores(G)
+    
+    bridges = list(nx.bridges(G))
+    if not bridges:
+        return actions_taken
+        
+    # We want to prioritize bridges connected to high betweenness nodes.
+    # We'll score each bridge by the sum of betweenness of its endpoints.
+    scored_bridges = []
+    for u, v in bridges:
+        b_score = G.nodes[u].get('betweenness_centrality', 0.0) + G.nodes[v].get('betweenness_centrality', 0.0)
+        scored_bridges.append(((u, v), b_score))
+        
+    scored_bridges.sort(key=lambda x: x[1], reverse=True)
+    
+    for (u, v), score in scored_bridges[:budget]:
+        if G.has_edge(u, v):
+            G.remove_edge(u, v)
+            actions_taken.append(f"Removed bridge {u}-{v}")
+            
     return actions_taken
 
 def strategy_anomaly_guided(G, budget, anomaly_detector):
@@ -129,24 +114,9 @@ def strategy_anomaly_guided(G, budget, anomaly_detector):
         
     return to_patch
 
-def strategy_rl_agent(G, budget, rl_agent):
-    """
-    Uses the trained DQN agent to select which nodes to patch.
-    Falls back to patch_centrality if agent is not trained.
-    """
-    if rl_agent is None or not rl_agent.is_trained:
-        return strategy_patch_centrality(G, budget)
-
-    chosen = rl_agent.select_action(G)
-    for n in chosen:
-        if G.nodes[n].get('infection_state') == 'susceptible':
-            G.nodes[n]['infection_state'] = 'patched'
-            G.nodes[n]['vulnerability_score'] = 0.0
-    return chosen
-
 # --- Simulation Mechanics ---
 
-def run_defense_experiment(G, strategy_fn, attacker_mode, strategy_name, anomaly_detector=None, rl_agent=None, n_runs=30, seed=42, initial_node=None, max_timesteps=50, beta=0.3):
+def run_defense_experiment(G, strategy_fn, attacker_mode, strategy_name, anomaly_detector=None, n_runs=30, seed=42, initial_node=None, max_timesteps=50, beta=0.3):
     """
     Runs n_runs simulations with the given strategy applied each timestep.
     Returns dict with mean and std for performance metrics.
@@ -257,10 +227,8 @@ def run_defense_experiment(G, strategy_fn, attacker_mode, strategy_name, anomaly
                 strategy_patch_vulnerable(sim_G, 5)
             elif strategy_name == "patch_centrality":
                 strategy_patch_centrality(sim_G, 5)
-            elif strategy_name == "isolate_bridges":
-                strategy_isolate_bridges(sim_G, 5)
-            elif strategy_name == "rl_agent":
-                strategy_rl_agent(sim_G, 5, rl_agent)
+            elif strategy_name == "isolate_chokepoints":
+                strategy_isolate_chokepoints(sim_G, 5)
             
             # 2. Propagate
             pending_infections = []
@@ -290,7 +258,7 @@ def run_defense_experiment(G, strategy_fn, attacker_mode, strategy_name, anomaly
             
             # 3. Detect
             if anomaly_detector:
-                detected_now = anomaly_detector.detect_anomalies(sim_G, threshold=2.0)
+                detected_now = anomaly_detector.detect_anomalies(sim_G, threshold=0.5)
                 detection_log.append((t, detected_now))
                 infection_log.append((t, pending_infections))
                 
@@ -365,7 +333,7 @@ def compare_all_strategies(G, attacker_mode, anomaly_detector=None):
     Runs all 6 strategies using run_defense_experiment.
     Returns summary DataFrame.
     """
-    strat_names = ['none', 'random', 'patch_vulnerable', 'patch_centrality', 'isolate_bridges', 'anomaly_guided']
+    strat_names = ['none', 'random', 'patch_vulnerable', 'patch_centrality', 'isolate_chokepoints', 'anomaly_guided', 'rl_agent']
     
     rows = []
     for s_name in strat_names:
