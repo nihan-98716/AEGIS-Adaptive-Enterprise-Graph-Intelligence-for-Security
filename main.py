@@ -587,22 +587,28 @@ def execute_scenario_pipeline(scenario_name: str, G, entry_nodes, attacker_mode:
             viz_path = f'outputs/network_{scenario_name}.html'
             os.makedirs('outputs', exist_ok=True)
 
-            # Use det_log from step [3/6] — already computed detections, no re-scoring.
-            # Re-scoring after 180 strategy runs skews GNN baseline and floods all nodes gold.
-            detected_nodes = set()
-            for t, flagged in det_log:
-                detected_nodes.update(flagged)
+            # Gold nodes = direct susceptible neighbours of infected nodes in base sim.
+            # Do NOT use GNN scoring — GraphSAGE floods the entire graph due to
+            # neighbourhood aggregation. Topology-based at-risk is accurate and sparse.
+            infected_in_base = set(
+                n for n, d in G_base.nodes(data=True)
+                if d.get('infection_state') == 'infected'
+            )
+            at_risk_nodes = set()
+            for inf_node in infected_in_base:
+                for nbr in G_base.neighbors(inf_node):
+                    if G_base.nodes[nbr].get('infection_state') != 'infected':
+                        at_risk_nodes.add(nbr)
 
-            # Clear any stale detected flags on G_base, apply only det_log ones
+            # Clear stale flags, apply fresh at-risk flags
             for n in G_base.nodes():
                 G_base.nodes[n].pop('detected', None)
-            for n in detected_nodes:
-                if n in G_base.nodes and G_base.nodes[n].get('infection_state') != 'infected':
-                    G_base.nodes[n]['detected'] = True
+            for n in at_risk_nodes:
+                G_base.nodes[n]['detected'] = True
 
-            gold_count = sum(1 for _, d in G_base.nodes(data=True) if d.get('detected'))
-            red_count  = sum(1 for _, d in G_base.nodes(data=True) if d.get('infection_state') == 'infected')
-            print(f"[Viz] Infected(red)={red_count}  GNN-detected(gold)={gold_count}")
+            gold_count = len(at_risk_nodes)
+            red_count  = len(infected_in_base)
+            print(f"[Viz] Infected(red)={red_count}  At-risk neighbours(gold)={gold_count}")
 
             visualize_graph(
                 G_base,
