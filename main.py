@@ -16,6 +16,7 @@ from anomaly_detector import make_anomaly_detector, run_anomaly_detection_experi
 from feature_extractor import extract_training_dataset
 from report_generator import run_report_generation, ReportGenerator
 from defense_simulator import run_defense_experiment
+from ai_modules import RLDefenseAgent
 from risk_engine import plot_risk_heatmap
 from anomaly_detector import AnomalyDetector
 from defense_simulator import plot_strategy_comparison, plot_infection_curves
@@ -338,7 +339,7 @@ def save_model_metrics_csv(all_scenario_metrics: list):
 
 def execute_scenario_pipeline(scenario_name: str, G, entry_nodes, attacker_mode: str, beta: float, 
                              anomaly_detector: AnomalyDetector, report_gen: ReportGenerator, skip_report: bool,
-                             visualize: bool = False) -> Dict[str, Any]:
+                             rl_agent=None, visualize: bool = False) -> Dict[str, Any]:
     """
     Executes the standard 8-step pipeline for any given attack scenario mapping.
     """
@@ -446,7 +447,7 @@ def execute_scenario_pipeline(scenario_name: str, G, entry_nodes, attacker_mode:
     model_metrics = compute_model_metrics(det_log, inf_log, G_base, risk_df, rl_agent=rl_agent)
     
     # 5. Multiprocessing Defense Comparisons
-    strategies = ["none", "random", "patch_vulnerable", "patch_centrality", "isolate_bridges", "anomaly_guided"]
+    strategies = ["none", "random", "patch_vulnerable", "patch_centrality", "isolate_bridges", "anomaly_guided", "rl_agent"]
     comparison_results = []
     
     print("[5/6] Executing Defense Comparisons using ProcessPoolExecutor...")
@@ -795,12 +796,12 @@ def execute_scenario_pipeline(scenario_name: str, G, entry_nodes, attacker_mode:
 # Scenario Definitions
 # ---------------------------------------------------------
 
-def scenario_random_workstation(G, anomaly_detector, report_gen, skip_report, visualize=False):
+def scenario_random_workstation(G, anomaly_detector, report_gen, skip_report, rl_agent=None, visualize=False):
     workstations = [n for n, d in G.nodes(data=True) if d.get('node_type') == 'workstation']
     entry = [random.choice(workstations)] if workstations else [list(G.nodes())[0]]
     return execute_scenario_pipeline("Random_Workstation", G, entry, "random", 0.3, anomaly_detector, report_gen, skip_report, rl_agent=rl_agent, visualize=visualize)
 
-def scenario_targeted_finance(G, anomaly_detector, report_gen, skip_report, visualize=False):
+def scenario_targeted_finance(G, anomaly_detector, report_gen, skip_report, rl_agent=None, visualize=False):
     finance_nodes = [n for n, d in G.nodes(data=True) if d.get('department') == 'Finance']
     if finance_nodes:
         best_finance = max(finance_nodes, key=lambda n: G.nodes[n].get('asset_value', 0))
@@ -809,12 +810,12 @@ def scenario_targeted_finance(G, anomaly_detector, report_gen, skip_report, visu
         entry = [list(G.nodes())[0]]
     return execute_scenario_pipeline("Targeted_Finance", G, entry, "greedy", 0.3, anomaly_detector, report_gen, skip_report, rl_agent=rl_agent, visualize=visualize)
 
-def scenario_domain_controller(G, anomaly_detector, report_gen, skip_report, visualize=False):
+def scenario_domain_controller(G, anomaly_detector, report_gen, skip_report, rl_agent=None, visualize=False):
     servers = [n for n, d in G.nodes(data=True) if d.get('node_type') == 'server' and d.get('privilege_level') == 'domain_admin']
     entry = [servers[0]] if servers else [list(G.nodes())[0]]
     return execute_scenario_pipeline("Domain_Controller", G, entry, "greedy", 0.4, anomaly_detector, report_gen, skip_report, rl_agent=rl_agent, visualize=visualize)
 
-def scenario_stealth(G, anomaly_detector, report_gen, skip_report, visualize=False):
+def scenario_stealth(G, anomaly_detector, report_gen, skip_report, rl_agent=None, visualize=False):
     entry = [random.choice(list(G.nodes()))]
     return execute_scenario_pipeline("Stealth", G, entry, "stealth", 0.1, anomaly_detector, report_gen, skip_report, rl_agent=rl_agent, visualize=visualize)
 
@@ -963,12 +964,17 @@ if __name__ == "__main__":
              use_gnn=GNN_ANOMALY_MODE,
          )
          report_gen = ReportGenerator(model_name="mistral")
-         
+
+         rl_agent = RLDefenseAgent(n_nodes=G.number_of_nodes(), budget=5)
+         if not rl_agent.load():
+             rl_agent.train(G, attacker_mode='random', beta=0.3, episodes=60)
+             rl_agent.save()
+
          if args.scenario == "random":
-             scenario_random_workstation(G, anomaly_detector, report_gen, skip_report=args.no_report, visualize=args.visualize)
+             scenario_random_workstation(G, anomaly_detector, report_gen, skip_report=args.no_report, rl_agent=rl_agent, visualize=args.visualize)
          elif args.scenario == "finance":
-             scenario_targeted_finance(G, anomaly_detector, report_gen, skip_report=args.no_report, visualize=args.visualize)
+             scenario_targeted_finance(G, anomaly_detector, report_gen, skip_report=args.no_report, rl_agent=rl_agent, visualize=args.visualize)
          elif args.scenario == "dc":
-             scenario_domain_controller(G, anomaly_detector, report_gen, skip_report=args.no_report, visualize=args.visualize)
+             scenario_domain_controller(G, anomaly_detector, report_gen, skip_report=args.no_report, rl_agent=rl_agent, visualize=args.visualize)
          elif args.scenario == "stealth":
              scenario_stealth(G, anomaly_detector, report_gen, skip_report=args.no_report, visualize=args.visualize)

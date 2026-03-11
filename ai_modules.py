@@ -581,6 +581,8 @@ class RLDefenseAgent:
         Train the DQN over `episodes` full simulation episodes on graph G.
         Uses the propagation engine directly for environment dynamics.
         """
+        # Always reset epsilon to 1.0 for fresh training regardless of loaded state
+        self.epsilon = 1.0
         import copy as _cp
         from network_graph import reset_graph as _rg
         from propagation_engine import (run_simulation,
