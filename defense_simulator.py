@@ -129,9 +129,24 @@ def strategy_anomaly_guided(G, budget, anomaly_detector):
         
     return to_patch
 
+def strategy_rl_agent(G, budget, rl_agent):
+    """
+    Uses the trained DQN agent to select which nodes to patch.
+    Falls back to patch_centrality if agent is not trained.
+    """
+    if rl_agent is None or not rl_agent.is_trained:
+        return strategy_patch_centrality(G, budget)
+
+    chosen = rl_agent.select_action(G)
+    for n in chosen:
+        if G.nodes[n].get('infection_state') == 'susceptible':
+            G.nodes[n]['infection_state'] = 'patched'
+            G.nodes[n]['vulnerability_score'] = 0.0
+    return chosen
+
 # --- Simulation Mechanics ---
 
-def run_defense_experiment(G, strategy_fn, attacker_mode, strategy_name, anomaly_detector=None, n_runs=30, seed=42, initial_node=None, max_timesteps=50, beta=0.3):
+def run_defense_experiment(G, strategy_fn, attacker_mode, strategy_name, anomaly_detector=None, rl_agent=None, n_runs=30, seed=42, initial_node=None, max_timesteps=50, beta=0.3):
     """
     Runs n_runs simulations with the given strategy applied each timestep.
     Returns dict with mean and std for performance metrics.
@@ -244,6 +259,8 @@ def run_defense_experiment(G, strategy_fn, attacker_mode, strategy_name, anomaly
                 strategy_patch_centrality(sim_G, 5)
             elif strategy_name == "isolate_bridges":
                 strategy_isolate_bridges(sim_G, 5)
+            elif strategy_name == "rl_agent":
+                strategy_rl_agent(sim_G, 5, rl_agent)
             
             # 2. Propagate
             pending_infections = []

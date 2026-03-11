@@ -355,61 +355,345 @@ class GNNPredictor:
 
 
 # ---------------------------------------------------------------------------
-# RLDefenseAgent  (stub — wiring into defense loop is a separate roadmap item)
+# DQN Defense Agent — pure NumPy, no PyTorch required
 # ---------------------------------------------------------------------------
 
+class _DQNNetwork:
+    """
+    Lightweight 2-layer MLP: state_dim -> 128 -> 64 -> action_dim
+    Trained with SGD + experience replay entirely in NumPy.
+    """
+    def __init__(self, state_dim, action_dim, lr=1e-3, seed=42):
+        rng = np.random.default_rng(seed)
+        self.lr = lr
+        # Xavier initialisation
+        def xavier(fan_in, fan_out):
+            lim = np.sqrt(6.0 / (fan_in + fan_out))
+            return rng.uniform(-lim, lim, (fan_in, fan_out))
+
+        self.W1 = xavier(state_dim, 128);  self.b1 = np.zeros(128)
+        self.W2 = xavier(128, 64);          self.b2 = np.zeros(64)
+        self.W3 = xavier(64, action_dim);   self.b3 = np.zeros(action_dim)
+
+    def forward(self, x):
+        self._x  = x
+        self._h1 = np.maximum(0, x @ self.W1 + self.b1)
+        self._h2 = np.maximum(0, self._h1 @ self.W2 + self.b2)
+        self._q  = self._h2 @ self.W3 + self.b3
+        return self._q
+
+    def backward(self, loss_grad):
+        """Backprop through 2-layer ReLU MLP, SGD update."""
+        dq   = loss_grad                              # (action_dim,)
+        dW3  = np.outer(self._h2, dq)
+        db3  = dq
+        dh2  = dq @ self.W3.T
+        dh2 *= (self._h2 > 0)
+        dW2  = np.outer(self._h1, dh2)
+        db2  = dh2
+        dh1  = dh2 @ self.W2.T
+        dh1 *= (self._h1 > 0)
+        dW1  = np.outer(self._x, dh1)
+        db1  = dh1
+
+        self.W3 -= self.lr * dW3;  self.b3 -= self.lr * db3
+        self.W2 -= self.lr * dW2;  self.b2 -= self.lr * db2
+        self.W1 -= self.lr * dW1;  self.b1 -= self.lr * db1
+
+    def save(self, path):
+        import os; os.makedirs(os.path.dirname(path), exist_ok=True)
+        np.savez(path,
+                 W1=self.W1, b1=self.b1,
+                 W2=self.W2, b2=self.b2,
+                 W3=self.W3, b3=self.b3)
+
+    def load(self, path):
+        d = np.load(path + '.npz')
+        self.W1, self.b1 = d['W1'], d['b1']
+        self.W2, self.b2 = d['W2'], d['b2']
+        self.W3, self.b3 = d['W3'], d['b3']
+
+
 class RLDefenseAgent:
-    def __init__(self, state_dim=5, action_dim=100, budget=5):
-        self.state_dim  = state_dim
-        self.action_dim = action_dim
-        self.budget     = budget
+    """
+    DQN agent that learns which nodes to patch each timestep.
 
+    State  : 5 features per node (infection, risk, anomaly, vulnerability, degree)
+             flattened to (n_nodes * 5,) vector — padded/truncated to state_dim.
+    Action : integer node index to patch (applied budget times greedily).
+    Reward : -10 * new_infections_pct - 50 * critical_infected + 5 * patched_count
+    Training: experience replay, epsilon-greedy exploration, target network sync.
+    """
+
+    SAVE_PATH = 'models/rl_agent'
+
+    def __init__(self, n_nodes=103, budget=5, lr=5e-4,
+                 gamma=0.95, epsilon=1.0, epsilon_min=0.05,
+                 epsilon_decay=0.97, replay_size=2000,
+                 batch_size=64, target_sync=10, seed=42):
+
+        self.n_nodes      = n_nodes
+        self.budget       = budget
+        self.state_dim    = n_nodes * 5          # 5 features per node
+        self.action_dim   = n_nodes
+        self.gamma        = gamma
+        self.epsilon      = epsilon
+        self.epsilon_min  = epsilon_min
+        self.epsilon_decay= epsilon_decay
+        self.batch_size   = batch_size
+        self.target_sync  = target_sync
+        self.is_trained   = False
+        self._step        = 0
+        self._rng         = np.random.default_rng(seed)
+
+        self.online  = _DQNNetwork(self.state_dim, self.action_dim, lr=lr, seed=seed)
+        self.target  = _DQNNetwork(self.state_dim, self.action_dim, lr=lr, seed=seed+1)
+        self._sync_target()
+
+        # Replay buffer: list of (s, a, r, s', done) tuples
+        self._replay  = []
+        self._max_rep = replay_size
+
+    # ------------------------------------------------------------------
+    # State encoding
+    # ------------------------------------------------------------------
     def get_state(self, G):
-        n_nodes = G.number_of_nodes()
-        if n_nodes == 0:
-            return np.zeros(self.state_dim)
-
-        infected_nodes   = [n for n, d in G.nodes(data=True) if d.get('infection_state') == 'infected']
-        infection_rate   = len(infected_nodes) / n_nodes
-        mean_risk_score  = np.mean([d.get('risk_score', 0.0) for _, d in G.nodes(data=True)])
-        detected_nodes   = [n for n, d in G.nodes(data=True) if d.get('detected', False)]
-        n_det_norm       = len(detected_nodes) / n_nodes
-
-        critical_nodes   = [n for n, d in G.nodes(data=True)
-                            if d.get('node_type') in ['server', 'controller', 'database']]
-        crit_infected    = [n for n in critical_nodes if n in infected_nodes]
-        n_crit_norm      = len(crit_infected) / max(len(critical_nodes), 1)
-
-        max_t            = G.graph.get('max_timesteps', 50)
-        current_t        = G.graph.get('timestep', 0)
-        t_norm           = current_t / float(max_t) if max_t > 0 else 0.0
-
-        return np.array([infection_rate, mean_risk_score, n_det_norm,
-                         n_crit_norm, t_norm])
-
-    def select_action(self, state, G):
         """
-        Real implementation: PPO policy network
-        State -> 2-layer MLP -> action logits over all nodes
-        Sample top-budget nodes from softmax distribution
+        Returns a flat (n_nodes * 5,) array.
+        Features per node: [infection_flag, risk_score, anomaly_score,
+                            vulnerability_score, degree_norm]
+        Nodes are visited in sorted order for consistency.
         """
-        return strategy_patch_centrality(G, self.budget)
+        nodes   = sorted(G.nodes())
+        n       = len(nodes)
+        max_deg = max(dict(G.degree()).values()) or 1
+        feats   = np.zeros((n, 5), dtype=np.float32)
+        for i, nd in enumerate(nodes):
+            d = G.nodes[nd]
+            feats[i, 0] = 1.0 if d.get('infection_state') == 'infected'  else 0.0
+            feats[i, 1] = float(d.get('risk_score',        0.0))
+            feats[i, 2] = min(float(d.get('anomaly_score', 0.0)) / 10.0, 1.0)
+            feats[i, 3] = float(d.get('vulnerability_score', 0.0))
+            feats[i, 4] = G.degree(nd) / max_deg
+        flat = feats.flatten()
+        # Pad or truncate to self.state_dim
+        if len(flat) < self.state_dim:
+            flat = np.concatenate([flat, np.zeros(self.state_dim - len(flat))])
+        return flat[:self.state_dim]
 
-    def compute_reward(self, G, prev_infection_rate):
-        n_nodes = G.number_of_nodes()
-        if n_nodes == 0:
-            return 0.0
-        infected_nodes         = [n for n, d in G.nodes(data=True) if d.get('infection_state') == 'infected']
-        current_infection_rate = len(infected_nodes) / n_nodes
-        new_infections         = current_infection_rate - prev_infection_rate
-        critical_nodes         = [n for n, d in G.nodes(data=True)
-                                  if d.get('node_type') in ['server', 'controller', 'database']]
-        crit_new               = sum(1 for n in critical_nodes
-                                     if G.nodes[n].get('newly_infected', False))
-        nodes_patched          = sum(1 for n, d in G.nodes(data=True)
-                                     if d.get('patched_this_timestep', False))
-        return float((-10 * new_infections * 100) + (-50 * crit_new) + (5 * nodes_patched))
+    # ------------------------------------------------------------------
+    # Action selection
+    # ------------------------------------------------------------------
+    def select_action(self, G):
+        """
+        Returns list of up to `budget` node IDs to patch.
+        Uses epsilon-greedy: random susceptible nodes vs Q-network top-k.
+        """
+        susceptible = [n for n, d in G.nodes(data=True)
+                       if d.get('infection_state') == 'susceptible']
+        if not susceptible:
+            return []
 
-    def update(self, state, action, reward, next_state):
-        """PPO update — stub for future wiring."""
-        pass
+        if self._rng.random() < self.epsilon:
+            # Explore: random susceptible nodes
+            k = min(self.budget, len(susceptible))
+            chosen = list(self._rng.choice(susceptible, size=k, replace=False))
+        else:
+            # Exploit: Q-network scores over all node indices
+            state = self.get_state(G)
+            q     = self.online.forward(state)
+            nodes = sorted(G.nodes())
+            # Mask out non-susceptible nodes
+            mask  = np.full(len(nodes), -1e9)
+            susc_set = set(susceptible)
+            for i, nd in enumerate(nodes):
+                if nd in susc_set:
+                    mask[i] = q[i] if i < len(q) else 0.0
+            top_idx = np.argsort(mask)[::-1][:self.budget]
+            chosen  = [nodes[i] for i in top_idx if mask[i] > -1e9]
+
+        return chosen
+
+    # ------------------------------------------------------------------
+    # Reward
+    # ------------------------------------------------------------------
+    def compute_reward(self, prev_infected_set, G):
+        nodes           = list(G.nodes())
+        n               = len(nodes)
+        infected_now    = set(nd for nd in nodes
+                              if G.nodes[nd].get('infection_state') == 'infected')
+        new_infections  = len(infected_now - prev_infected_set)
+        critical        = [nd for nd in nodes
+                           if G.nodes[nd].get('node_type') in ('server', 'controller')]
+        crit_infected   = sum(1 for nd in critical
+                              if G.nodes[nd].get('infection_state') == 'infected')
+        patched         = sum(1 for nd in nodes
+                              if G.nodes[nd].get('infection_state') == 'patched')
+        reward = (-10.0 * new_infections / max(n, 1)
+                  - 5.0  * crit_infected  / max(len(critical), 1)
+                  + 2.0  * patched        / max(n, 1))
+        return float(reward)
+
+    # ------------------------------------------------------------------
+    # Training helpers
+    # ------------------------------------------------------------------
+    def _sync_target(self):
+        self.target.W1 = self.online.W1.copy()
+        self.target.b1 = self.online.b1.copy()
+        self.target.W2 = self.online.W2.copy()
+        self.target.b2 = self.online.b2.copy()
+        self.target.W3 = self.online.W3.copy()
+        self.target.b3 = self.online.b3.copy()
+
+    def store(self, s, a, r, s2, done):
+        if len(self._replay) >= self._max_rep:
+            self._replay.pop(0)
+        self._replay.append((s, a, r, s2, done))
+
+    def learn(self):
+        if len(self._replay) < self.batch_size:
+            return
+        idx     = self._rng.choice(len(self._replay), self.batch_size, replace=False)
+        batch   = [self._replay[i] for i in idx]
+        total_loss = 0.0
+        for s, a, r, s2, done in batch:
+            q_vals  = self.online.forward(s)
+            q_next  = self.target.forward(s2)
+            target_val = r if done else r + self.gamma * np.max(q_next)
+            error   = q_vals[a] - target_val
+            grad    = np.zeros_like(q_vals)
+            grad[a] = 2.0 * error / self.batch_size
+            self.online.backward(grad)
+            total_loss += error ** 2
+        self._step += 1
+        if self._step % self.target_sync == 0:
+            self._sync_target()
+        self.epsilon = max(self.epsilon_min,
+                           self.epsilon * self.epsilon_decay)
+        return total_loss / self.batch_size
+
+    # ------------------------------------------------------------------
+    # Full training loop
+    # ------------------------------------------------------------------
+    def train(self, G, attacker_mode='random', beta=0.3, episodes=60,
+              max_timesteps=50, seed=42):
+        """
+        Train the DQN over `episodes` full simulation episodes on graph G.
+        Uses the propagation engine directly for environment dynamics.
+        """
+        import copy as _cp
+        from network_graph import reset_graph as _rg
+        from propagation_engine import (run_simulation,
+                                        calculate_infection_probability,
+                                        select_target_nodes,
+                                        update_global_attack_stage)
+
+        print(f"  [DQN] Training for {episodes} episodes ...")
+        nodes = sorted(G.nodes())
+
+        for ep in range(episodes):
+            sim_G = _cp.deepcopy(G)
+            _rg(sim_G)
+
+            # Baseline traffic
+            for nd in sim_G.nodes():
+                bl = {}
+                for nb in sim_G.neighbors(nd):
+                    bl[str(nb)] = (sim_G[nd][nb].get('traffic_frequency', 0.5)
+                                   * sim_G[nd][nb].get('trust_weight', 0.5))
+                sim_G.nodes[nd]['baseline_traffic'] = bl
+
+            # Patient zero
+            rng_ep = np.random.default_rng(seed + ep)
+            wks = [n for n, d in sim_G.nodes(data=True) if d.get('node_type') == 'workstation']
+            pz  = int(rng_ep.choice(wks)) if wks else int(rng_ep.choice(nodes))
+            sim_G.nodes[pz]['infection_state'] = 'infected'
+            atk_stage = update_global_attack_stage(sim_G, 'none')
+
+            state        = self.get_state(sim_G)
+            ep_reward    = 0.0
+
+            for t in range(7, max_timesteps + 1):
+                sim_G.graph['timestep'] = t
+                prev_infected = set(n for n in nodes
+                                    if sim_G.nodes[n].get('infection_state') == 'infected')
+
+                # Agent acts — patch budget nodes
+                chosen = self.select_action(sim_G)
+                for nd in chosen:
+                    sim_G.nodes[nd]['infection_state'] = 'patched'
+                    sim_G.nodes[nd]['vulnerability_score'] = 0.0
+
+                # Propagate
+                pending = []
+                for src in list(prev_infected):
+                    for tgt in select_target_nodes(sim_G, src, attacker_mode):
+                        if (sim_G.nodes[tgt].get('infection_state') == 'susceptible'
+                                and tgt not in pending):
+                            p = calculate_infection_probability(sim_G, src, tgt, beta)
+                            if rng_ep.random() < p:
+                                pending.append(tgt)
+                for nd in pending:
+                    sim_G.nodes[nd]['infection_state'] = 'infected'
+
+                atk_stage = update_global_attack_stage(sim_G, atk_stage)
+
+                # Reward & next state
+                reward     = self.compute_reward(prev_infected, sim_G)
+                next_state = self.get_state(sim_G)
+                ep_reward += reward
+
+                # Map chosen node IDs to first action index (store one transition per patch)
+                for nd in chosen:
+                    a_idx = nodes.index(nd) if nd in nodes else 0
+                    done  = (t == max_timesteps)
+                    self.store(state, a_idx, reward, next_state, done)
+
+                self.learn()
+                state = next_state
+
+                inf_count = sum(1 for n in nodes
+                                if sim_G.nodes[n].get('infection_state') == 'infected')
+                if inf_count == len(nodes):
+                    break
+                infected_check = [n for n in nodes
+                                  if sim_G.nodes[n].get('infection_state') == 'infected']
+                if not any(any(sim_G.nodes[nb].get('infection_state') == 'susceptible'
+                               for nb in sim_G.neighbors(n))
+                           for n in infected_check):
+                    break
+
+            if (ep + 1) % 10 == 0:
+                inf_rate = sum(1 for n in nodes
+                               if sim_G.nodes[n].get('infection_state') == 'infected') / len(nodes)
+                print(f"  [DQN] ep {ep+1:3d}/{episodes} | "
+                      f"reward={ep_reward:+.2f} | "
+                      f"inf={inf_rate*100:.1f}% | "
+                      f"eps={self.epsilon:.3f}")
+
+        self.is_trained = True
+        self.epsilon = self.epsilon_min  # pure exploitation at inference
+        print(f"  [DQN] Training complete.")
+
+    # ------------------------------------------------------------------
+    # Save / Load
+    # ------------------------------------------------------------------
+    def save(self):
+        self.online.save(self.SAVE_PATH)
+        meta = np.array([self.epsilon, float(self.is_trained), float(self._step)])
+        np.save(self.SAVE_PATH + '_meta.npy', meta)
+        print(f"  [DQN] Model saved to {self.SAVE_PATH}.npz")
+
+    def load(self):
+        try:
+            self.online.load(self.SAVE_PATH)
+            self._sync_target()
+            meta = np.load(self.SAVE_PATH + '_meta.npy')
+            self.epsilon   = float(meta[0])
+            self.is_trained= bool(meta[1])
+            self._step     = int(meta[2])
+            print(f"  [DQN] Loaded model from {self.SAVE_PATH}.npz "
+                  f"(eps={self.epsilon:.3f})")
+            return True
+        except Exception:
+            return False
