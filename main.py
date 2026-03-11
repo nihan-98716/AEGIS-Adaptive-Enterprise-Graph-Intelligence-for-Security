@@ -265,6 +265,13 @@ def execute_scenario_pipeline(scenario_name: str, G, entry_nodes, attacker_mode:
         detection_metrics = anomaly_detector.compute_detection_metrics(det_log, inf_log)
         print(f"      -> Detection Lead Time: {detection_metrics.get('detection_lead_time_mean', 0.0):.2f} timesteps")
         print(f"      -> True Positive Rate:  {detection_metrics.get('true_positive_rate', 0.0)*100:.1f}%")
+
+        # Write final GNN anomaly scores back to G_base for tooltip display
+        final_scores = anomaly_detector.score_nodes(G_replay)
+        for n, score in final_scores.items():
+            if n in G_base.nodes:
+                G_base.nodes[n]['anomaly_score'] = round(float(score), 3)
+
     except Exception as e:
         import traceback; traceback.print_exc()
         print(f"      -> Anomaly eval failed: {e}")
