@@ -57,32 +57,47 @@ def strategy_patch_centrality(G, budget):
 
 def strategy_isolate_bridges(G, budget):
     """
-    Identify bridge edges, remove edges connected to highest betweenness nodes, up to budget limit.
-    A budget action here is an edge removal.
+    Patch susceptible nodes that sit on or near bridge edges — nodes whose removal
+    would disconnect the graph. Prioritised by betweenness centrality so we cut
+    the highest-traffic chokepoints first.  Falls back to high-betweenness
+    susceptible nodes when no bridge nodes remain.
     """
-    actions_taken = []
-    
-    # Needs metrics updated to know highest betweenness
     calculate_risk_scores(G)
-    
-    bridges = list(nx.bridges(G))
-    if not bridges:
-        return actions_taken
-        
-    # We want to prioritize bridges connected to high betweenness nodes.
-    # We'll score each bridge by the sum of betweenness of its endpoints.
-    scored_bridges = []
-    for u, v in bridges:
-        b_score = G.nodes[u].get('betweenness_centrality', 0.0) + G.nodes[v].get('betweenness_centrality', 0.0)
-        scored_bridges.append(((u, v), b_score))
-        
-    scored_bridges.sort(key=lambda x: x[1], reverse=True)
-    
-    for (u, v), score in scored_bridges[:budget]:
-        if G.has_edge(u, v):
-            G.remove_edge(u, v)
-            actions_taken.append(f"Removed bridge {u}-{v}")
-            
+    actions_taken = []
+
+    # Collect susceptible nodes that are endpoints of bridge edges
+    try:
+        bridge_nodes = set()
+        for u, v in nx.bridges(G):
+            if G.nodes[u].get('infection_state') == 'susceptible':
+                bridge_nodes.add(u)
+            if G.nodes[v].get('infection_state') == 'susceptible':
+                bridge_nodes.add(v)
+    except Exception:
+        bridge_nodes = set()
+
+    # Sort bridge nodes by betweenness descending
+    candidates = sorted(
+        bridge_nodes,
+        key=lambda n: G.nodes[n].get('betweenness_centrality', 0.0),
+        reverse=True
+    )
+
+    # Fallback: if fewer bridge nodes than budget, top up with high-betweenness susceptible nodes
+    if len(candidates) < budget:
+        extra = [
+            n for n, d in G.nodes(data=True)
+            if d.get('infection_state') == 'susceptible' and n not in bridge_nodes
+        ]
+        extra.sort(key=lambda n: G.nodes[n].get('betweenness_centrality', 0.0), reverse=True)
+        candidates = candidates + extra
+
+    to_patch = candidates[:budget]
+    for n in to_patch:
+        G.nodes[n]['infection_state'] = 'patched'
+        G.nodes[n]['vulnerability_score'] = 0.0
+        actions_taken.append(n)
+
     return actions_taken
 
 def strategy_anomaly_guided(G, budget, anomaly_detector):
