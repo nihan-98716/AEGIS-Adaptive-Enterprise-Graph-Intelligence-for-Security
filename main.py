@@ -798,7 +798,7 @@ def execute_scenario_pipeline(scenario_name: str, G, entry_nodes, attacker_mode:
 def scenario_random_workstation(G, anomaly_detector, report_gen, skip_report, visualize=False):
     workstations = [n for n, d in G.nodes(data=True) if d.get('node_type') == 'workstation']
     entry = [random.choice(workstations)] if workstations else [list(G.nodes())[0]]
-    return execute_scenario_pipeline("Random_Workstation", G, entry, "random", 0.3, anomaly_detector, report_gen, skip_report, visualize=visualize)
+    return execute_scenario_pipeline("Random_Workstation", G, entry, "random", 0.3, anomaly_detector, report_gen, skip_report, rl_agent=rl_agent, visualize=visualize)
 
 def scenario_targeted_finance(G, anomaly_detector, report_gen, skip_report, visualize=False):
     finance_nodes = [n for n, d in G.nodes(data=True) if d.get('department') == 'Finance']
@@ -807,16 +807,16 @@ def scenario_targeted_finance(G, anomaly_detector, report_gen, skip_report, visu
         entry = [best_finance]
     else:
         entry = [list(G.nodes())[0]]
-    return execute_scenario_pipeline("Targeted_Finance", G, entry, "greedy", 0.3, anomaly_detector, report_gen, skip_report, visualize=visualize)
+    return execute_scenario_pipeline("Targeted_Finance", G, entry, "greedy", 0.3, anomaly_detector, report_gen, skip_report, rl_agent=rl_agent, visualize=visualize)
 
 def scenario_domain_controller(G, anomaly_detector, report_gen, skip_report, visualize=False):
     servers = [n for n, d in G.nodes(data=True) if d.get('node_type') == 'server' and d.get('privilege_level') == 'domain_admin']
     entry = [servers[0]] if servers else [list(G.nodes())[0]]
-    return execute_scenario_pipeline("Domain_Controller", G, entry, "greedy", 0.4, anomaly_detector, report_gen, skip_report, visualize=visualize)
+    return execute_scenario_pipeline("Domain_Controller", G, entry, "greedy", 0.4, anomaly_detector, report_gen, skip_report, rl_agent=rl_agent, visualize=visualize)
 
 def scenario_stealth(G, anomaly_detector, report_gen, skip_report, visualize=False):
     entry = [random.choice(list(G.nodes()))]
-    return execute_scenario_pipeline("Stealth", G, entry, "stealth", 0.1, anomaly_detector, report_gen, skip_report, visualize=visualize)
+    return execute_scenario_pipeline("Stealth", G, entry, "stealth", 0.1, anomaly_detector, report_gen, skip_report, rl_agent=rl_agent, visualize=visualize)
 
 # ---------------------------------------------------------
 # Pipeline Executions
