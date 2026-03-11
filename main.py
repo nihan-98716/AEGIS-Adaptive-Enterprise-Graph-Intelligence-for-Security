@@ -267,7 +267,15 @@ def execute_scenario_pipeline(scenario_name: str, G, entry_nodes, attacker_mode:
         print(f"      -> True Positive Rate:  {detection_metrics.get('true_positive_rate', 0.0)*100:.1f}%")
 
         # Write final GNN anomaly scores back to G_base for tooltip display
-        final_scores = anomaly_detector.score_nodes(G_replay)
+        # Score from a clean base-sim replay (low beta) not viz sim (high beta)
+        # so only truly anomalous nodes score high, not the whole infected graph.
+        import copy as _sc; from network_graph import reset_graph as _rsg
+        G_score_replay = _sc.deepcopy(G); _rsg(G_score_replay)
+        for _step in base_sim_result['timestep_log']:
+            if _step['phase'] == 'baseline_recording': continue
+            for _n in _step['newly_infected_nodes']:
+                G_score_replay.nodes[_n]['infection_state'] = 'infected'
+        final_scores = anomaly_detector.score_nodes(G_score_replay)
         for n, score in final_scores.items():
             if n in G_base.nodes:
                 G_base.nodes[n]['anomaly_score'] = round(float(score), 3)
