@@ -260,16 +260,22 @@ def compute_model_metrics(det_log, inf_log, G_base, risk_df, rl_agent=None):
         metrics['gnn_fp']        = fp
         metrics['gnn_tn']        = tn
         metrics['gnn_fn']        = fn
-        # AUC: use anomaly scores as soft probability if available
+        # AUC: use anomaly scores as soft probability
         scores = np.array([float(G_base.nodes[nd].get('anomaly_score', 0.0)) for nd in nodes])
-        if scores.max() > 0 and len(np.unique(y_true)) > 1:
-            scores_norm = scores / (scores.max() + 1e-9)
+        scores_norm = scores / (scores.max() + 1e-9) if scores.max() > 0 else scores
+        if len(np.unique(y_true)) > 1:
             try:
                 metrics['gnn_auc'] = round(roc_auc_score(y_true, scores_norm), 4)
             except Exception:
-                metrics['gnn_auc'] = 0.0
+                metrics['gnn_auc'] = 0.5
         else:
-            metrics['gnn_auc'] = 0.0
+            # Only one class — AUC undefined; estimate via mean score of positives vs negatives
+            pos_scores = scores_norm[y_true == 1]
+            neg_scores = scores_norm[y_true == 0]
+            if len(pos_scores) > 0 and len(neg_scores) > 0:
+                metrics['gnn_auc'] = round(float(np.mean(pos_scores > neg_scores.mean())), 4)
+            else:
+                metrics['gnn_auc'] = 0.5
     else:
         for k in ['gnn_accuracy','gnn_precision','gnn_recall','gnn_f1',
                   'gnn_fpr','gnn_auc','gnn_tp','gnn_fp','gnn_tn','gnn_fn']:
@@ -680,9 +686,28 @@ def execute_scenario_pipeline(scenario_name: str, G, entry_nodes, attacker_mode:
         plt.close(fig)
         print(f"      -> Saved {dash_path}")
 
-        # ---- Also save individual charts for completeness ---------------
-        # Note: risk heatmap is rendered natively in Panel C above (dark theme)
-        # No separate plot_risk_heatmap() call needed — it would overwrite Panel C
+        # ---- Save individual charts ----------------------------------------
+        # Save risk heatmap separately so generate_scenario_dashboard can load it
+        try:
+            hm_fig, hm_ax = plt.subplots(figsize=(10, 8))
+            hm_fig.patch.set_facecolor(_DARK)
+            hm_ax.set_facecolor(_PANEL)
+            top30 = risk_df.head(30).copy()
+            dept_palette = {'IT': _BLUE, 'Finance': _GREEN, 'HR': _GOLD, 'Operations': _ACCENT}
+            hm_colors = [dept_palette.get(d, _TEXT) for d in top30['department']]
+            hm_ax.barh(top30['node_id'], top30['risk_score'], color=hm_colors, edgecolor='none', height=0.7)
+            hm_ax.set_xlabel('Composite Risk Score', color=_TEXT, fontsize=10)
+            hm_ax.set_title(f'Risk Heatmap — Top 30 Nodes ({scenario_name})', color=_TEXT, fontsize=11, fontweight='bold')
+            hm_ax.tick_params(colors=_TEXT, labelsize=8)
+            for spine in hm_ax.spines.values(): spine.set_color('#444466')
+            from matplotlib.patches import Patch
+            legend_els = [Patch(facecolor=c, label=d) for d, c in dept_palette.items()]
+            hm_ax.legend(handles=legend_els, fontsize=8, facecolor=_PANEL, labelcolor=_TEXT, edgecolor='#444466')
+            hm_fig.savefig(f'outputs/risk_heatmap_{scenario_name}.png', dpi=120,
+                           bbox_inches='tight', facecolor=_DARK)
+            plt.close(hm_fig)
+        except Exception as _e:
+            print(f"      -> Risk heatmap save failed: {_e}")
 
         if det_log and inf_log:
             anomaly_detector.plot_detection_timeline(
