@@ -354,84 +354,135 @@ def compare_all_strategies(G, attacker_mode, anomaly_detector=None):
 
 def plot_strategy_comparison(results_df):
     """
-    Grouped bar chart comparing all strategies across all metrics.
-    Colors anomaly_guided strategy differently.
+    Dark-themed horizontal bar chart — mean infection rate per strategy.
+    Saved to strategy_comparison.png (caller moves it to outputs/).
     """
-    categories = ['mean_infection_rate', 'mean_spread_velocity', 'mean_containment_time']
-    strategies = results_df['strategy_name'].tolist()
-    
-    x = np.arange(len(strategies))
-    width = 0.25
-    
-    fig, ax = plt.subplots(figsize=(14, 8))
-    
-    colors = ['#1f77b4' if s != 'anomaly_guided' else '#d62728' for s in strategies]
-    
-    # Plot bars dynamically handling the three primary metrics
-    for i, cat in enumerate(categories):
-        means = results_df[cat].tolist()
-        errors = results_df[cat.replace('mean_', 'std_')].tolist()
-        
-        # We normalize spread velocity and containment time against the maximums so they graph 
-        # on a similar visual scale as infection_rate (0-1)
-        max_val = max(means) if max(means) > 0 else 1
-        normalized_means = [m / max_val for m in means]
-        normalized_errors = [e / max_val for e in errors]
-        
-        ax.bar(
-            x + (i * width) - width, 
-            normalized_means, 
-            width, 
-            yerr=normalized_errors, 
-            label=f"{cat} (normalized)",
-            capsize=5,
-            color=colors,
-            alpha=[1.0, 0.7, 0.4][i] # Differentiating the metrics within the colors
-        )
-
-    ax.set_ylabel('Normalized Score', fontsize=12)
-    ax.set_title('Defense Strategy Comparison (Lower is generally better)', fontsize=16)
-    ax.set_xticks(x)
-    ax.set_xticklabels(strategies, rotation=45, ha='right')
-    
-    # Custom legend
     from matplotlib.patches import Patch
-    custom_lines = [
-        Patch(facecolor='grey', alpha=1.0, label='Standard Strategy'),
-        Patch(facecolor='#d62728', alpha=1.0, label='AI Integration (Anomaly Guided)'),
-        Patch(facecolor='black', alpha=1.0, label='Infection Rate'),
-        Patch(facecolor='black', alpha=0.7, label='Spread Velocity'),
-        Patch(facecolor='black', alpha=0.4, label='Containment Time')
+
+    _BG    = '#0d1117'
+    _PANEL = '#161b22'
+    _GOLD  = '#f5a623'
+    _GREEN = '#3fb950'
+    _RED   = '#f85149'
+    _BLUE  = '#58a6ff'
+    _PURP  = '#a855f7'
+    _TEXT  = '#ecf0f1'
+    _GREY  = '#8b949e'
+
+    df = results_df.sort_values('mean_infection_rate', ascending=True)
+    strategies = df['strategy_name'].tolist()
+    rates = (df['mean_infection_rate'] * 100).tolist()
+    stds  = (df.get('std_infection_rate', df['mean_infection_rate'] * 0) * 100).tolist()
+
+    color_map = {
+        'none':               _RED,
+        'isolate_chokepoints': _GREEN,
+        'patch_centrality':    _GREEN,
+        'patch_vulnerable':    _GREEN,
+        'rl_agent':            _PURP,
+        'anomaly_guided':      _GOLD,
+        'random':              _BLUE,
+    }
+    colors = [color_map.get(s, _BLUE) for s in strategies]
+
+    fig, ax = plt.subplots(figsize=(14, 7))
+    fig.patch.set_facecolor(_BG)
+    ax.set_facecolor(_PANEL)
+
+    bars = ax.barh(strategies, rates, xerr=stds, color=colors,
+                   edgecolor='none', height=0.55, capsize=4,
+                   error_kw={'ecolor': _GREY, 'linewidth': 1.2})
+
+    for bar, rate in zip(bars, rates):
+        ax.text(bar.get_width() + 0.1, bar.get_y() + bar.get_height() / 2,
+                f'{rate:.1f}%', va='center', ha='left',
+                color=_TEXT, fontsize=11, fontweight='bold',
+                fontfamily='monospace')
+
+    ax.set_xlabel('Mean Infection Rate (%)', color=_TEXT, fontsize=12)
+    ax.set_title('AEGIS - Defense Strategy Comparison (30 Monte Carlo runs per strategy)',
+                 color='white', fontsize=14, fontweight='bold', pad=14)
+    max_rate = max(rates) if rates else 10
+    ax.set_xlim(0, max_rate * 1.35)
+    ax.tick_params(colors=_TEXT, labelsize=11)
+    for spine in ax.spines.values():
+        spine.set_color('#30363d')
+    ax.grid(axis='x', color='#30363d', linewidth=0.5, alpha=0.7)
+
+    legend_handles = [
+        Patch(facecolor=_RED,   label='No Defense (baseline)'),
+        Patch(facecolor=_GREEN, label='Structural Heuristic'),
+        Patch(facecolor=_PURP,  label='RL Agent (DQN)'),
+        Patch(facecolor=_GOLD,  label='AI Guided (GNN)'),
+        Patch(facecolor=_BLUE,  label='Random Patching'),
     ]
-    ax.legend(handles=custom_lines, loc='upper left', bbox_to_anchor=(1, 1))
-    
+    ax.legend(handles=legend_handles, fontsize=10,
+              facecolor=_PANEL, labelcolor=_TEXT,
+              edgecolor='#444466', loc='lower right')
+
     plt.tight_layout()
-    plt.savefig('strategy_comparison.png', dpi=300)
+    plt.savefig('strategy_comparison.png', dpi=150, bbox_inches='tight',
+                facecolor=fig.get_facecolor())
     print("\nSaved strategy_comparison.png")
-    # plt.close()  # suppressed for non-interactive Agg backend
+
 
 def plot_infection_curves(curve_dict):
     """
-    curve_dict maps strategy_name to list of mean infected_count per timestep.
-    Plot all strategies as lines on one chart.
+    Dark-themed multi-scenario infection spread curves.
+    curve_dict maps scenario_name -> list of infected_count per timestep.
+    Saved to infection_curves.png (caller moves it to outputs/).
     """
-    plt.figure(figsize=(12, 7))
-    
-    for strategy, counts in curve_dict.items():
-        timesteps = range(len(counts))
-        linewidth = 3 if strategy == 'anomaly_guided' else 1.5
-        linestyle = '-' if strategy == 'anomaly_guided' else '--'
-        plt.plot(timesteps, counts, label=strategy, linewidth=linewidth, linestyle=linestyle)
-        
-    plt.title('Infection Curves by Defense Strategy', fontsize=16)
-    plt.xlabel('Timestep', fontsize=12)
-    plt.ylabel('Mean Infected Count', fontsize=12)
-    plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
-    plt.grid(True, alpha=0.3)
+    _BG    = '#0d1117'
+    _PANEL = '#161b22'
+    _TEXT  = '#ecf0f1'
+    _GREY  = '#8b949e'
+
+    scenario_colors = {
+        'Random_Workstation':  '#58a6ff',
+        'Targeted_Finance':    '#f5a623',
+        'Domain_Controller':   '#f85149',
+        'Stealth':             '#3fb950',
+    }
+    fallback_colors = ['#a855f7', '#ff7b54', '#00d4aa', '#ffd700']
+
+    fig, ax = plt.subplots(figsize=(13, 7))
+    fig.patch.set_facecolor(_BG)
+    ax.set_facecolor(_PANEL)
+
+    fallback_idx = 0
+    for scenario, counts in curve_dict.items():
+        color = scenario_colors.get(scenario)
+        if color is None:
+            color = fallback_colors[fallback_idx % len(fallback_colors)]
+            fallback_idx += 1
+        timesteps = list(range(len(counts)))
+        lw = 3 if scenario == 'Domain_Controller' else 2
+        ax.plot(timesteps, counts, label=scenario.replace('_', ' '),
+                color=color, linewidth=lw, alpha=0.9)
+        # Annotate final value
+        if counts:
+            ax.annotate(f'{counts[-1]}',
+                        xy=(timesteps[-1], counts[-1]),
+                        xytext=(4, 0), textcoords='offset points',
+                        color=color, fontsize=9, fontweight='bold',
+                        va='center', fontfamily='monospace')
+
+    ax.set_title('AEGIS - Ransomware Spread by Attack Scenario',
+                 color='white', fontsize=14, fontweight='bold', pad=14)
+    ax.set_xlabel('Simulation Timestep', color=_TEXT, fontsize=12)
+    ax.set_ylabel('Cumulative Infected Nodes', color=_TEXT, fontsize=12)
+    ax.tick_params(colors=_TEXT, labelsize=10)
+    for spine in ax.spines.values():
+        spine.set_color('#30363d')
+    ax.grid(True, color='#30363d', linewidth=0.5, alpha=0.7)
+    ax.set_ylim(bottom=0)
+    ax.legend(fontsize=11, facecolor=_PANEL, labelcolor=_TEXT,
+              edgecolor='#444466', loc='upper left')
+
     plt.tight_layout()
-    plt.savefig('infection_curves.png', dpi=300)
+    plt.savefig('infection_curves.png', dpi=150, bbox_inches='tight',
+                facecolor=fig.get_facecolor())
     print("Saved infection_curves.png")
-    # plt.close()  # suppressed for non-interactive Agg backend
 
 if __name__ == "__main__":
     from network_graph import generate_enterprise_graph

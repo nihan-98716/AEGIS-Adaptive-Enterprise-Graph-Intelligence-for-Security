@@ -261,31 +261,46 @@ class AnomalyDetector:
             cum_infected.append(len(inf_set))
             cum_detected.append(len(det_set))
 
+        _BG    = '#0d1117'
+        _PANEL = '#161b22'
+        _RED   = '#f85149'
+        _GOLD  = '#f5a623'
+        _TEXT  = '#ecf0f1'
+        _GREY  = '#8b949e'
+
         fig, ax = plt.subplots(figsize=(10, 6))
-        ax.plot(all_timesteps, cum_infected, color="crimson",
-                label="Cumulative Infected", linewidth=2.5)
-        ax.plot(all_timesteps, cum_detected, color="goldenrod",
-                label="Cumulative Detected (GNN)", linewidth=2.5, linestyle="--")
+        fig.patch.set_facecolor(_BG)
+        ax.set_facecolor(_PANEL)
 
-        # Shade the gap between detected and infected
+        ax.plot(all_timesteps, cum_infected, color=_RED,
+                label='Cumulative Infected', linewidth=2.5)
+        ax.plot(all_timesteps, cum_detected, color=_GOLD,
+                label='Cumulative Detected (GNN)', linewidth=2.5, linestyle='--')
+
+        # Shade gap — detected ahead of infected = GNN lead
         ax.fill_between(all_timesteps, cum_detected, cum_infected,
-                        alpha=0.15, color="crimson", label="Undetected gap")
+                        alpha=0.12, color=_RED, label='Undetected gap')
 
-        title = "GNN Anomaly Detection Timeline vs Infection Spread"
-        if title_suffix:
-            title += f" — {title_suffix}"
-        ax.set_title(title, fontsize=14, fontweight="bold")
-        ax.set_xlabel("Simulation Timestep", fontsize=12)
-        ax.set_ylabel("Cumulative Node Count", fontsize=12)
-        ax.legend(fontsize=11)
-        ax.grid(True, alpha=0.3)
-        # Ensure y-axis starts at 0
+        safe_suffix = (title_suffix or "").replace('\u2014', '-').replace('\u2013', '-')
+        title = 'GNN Anomaly Detection vs Infection Spread'
+        if safe_suffix:
+            title += f' - {safe_suffix}'
+        ax.set_title(title, fontsize=13, fontweight='bold', color='white', pad=10)
+        ax.set_xlabel('Simulation Timestep', fontsize=11, color=_TEXT)
+        ax.set_ylabel('Cumulative Node Count', fontsize=11, color=_TEXT)
+        ax.tick_params(colors=_TEXT, labelsize=10)
+        for spine in ax.spines.values():
+            spine.set_color('#30363d')
+        ax.grid(True, color='#30363d', linewidth=0.5, alpha=0.7)
         ax.set_ylim(bottom=0)
+        ax.legend(fontsize=10, facecolor=_PANEL, labelcolor=_TEXT,
+                  edgecolor='#444466', loc='upper left')
         plt.tight_layout()
 
-        output_file = "detection_timeline.png"
-        plt.savefig(output_file, dpi=150)
-        print(f"  Detection timeline saved to {output_file}")
+        output_file = 'detection_timeline.png'
+        plt.savefig(output_file, dpi=150, bbox_inches='tight',
+                    facecolor=fig.get_facecolor())
+        print(f'  Detection timeline saved to {output_file}')
         plt.close(fig)
 
 # ---------------------------------------------------------------------------

@@ -28,181 +28,295 @@ from defense_simulator import plot_strategy_comparison, plot_infection_curves
 
 def generate_scenario_dashboard(scenario_name: str, strategy_df, detection_metrics: dict,
                                  base_sim_result: dict, viz_sim_result: dict,
-                                 model_metrics: dict = None):
+                                 model_metrics: dict = None,
+                                 risk_df=None, det_log=None, inf_log=None):
     """
-    Builds a 2x2 multi-panel dashboard PNG for a single scenario and saves it
-    to outputs/dashboard_{scenario_name}.png.
-
-    Panel layout:
-        [Top-left]     Risk Heatmap (top 30 nodes by composite risk score)
-        [Top-right]    GNN Detection Timeline (cumulative infected vs detected)
-        [Bottom-left]  Defense Strategy Comparison (bar chart)
-        [Bottom-right] Scenario Stats Summary (text panel)
+    2x3 dashboard layout — all panels rendered natively (no external PNGs needed):
+        [0,0] Risk Heatmap   [0,1] Detection Timeline  [0,2] Model Metrics (text)
+        [1,0:2] Strategy Comparison (wide)              [1,2] Scenario Summary (text)
     """
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
-    import matplotlib.image as mpimg
     import matplotlib.gridspec as gridspec
-    from matplotlib.patches import FancyBboxPatch
     import os
 
-    fig = plt.figure(figsize=(30, 14))
-    fig.patch.set_facecolor("#0d1117")
+    _BG    = "#0d1117"
+    _PANEL = "#161b22"
+    _GOLD  = "#f5a623"
+    _GREEN = "#3fb950"
+    _RED   = "#f85149"
+    _BLUE  = "#58a6ff"
+    _PURP  = "#a855f7"
+    _GREY  = "#8b949e"
+    _TEXT  = "#ecf0f1"
 
-    # Title banner
+    fig = plt.figure(figsize=(30, 14))
+    fig.patch.set_facecolor(_BG)
     fig.suptitle(
-        f"AEGIS — Scenario: {scenario_name.replace('_', ' ')}",
+        f"AEGIS  |  Scenario: {scenario_name.replace('_', ' ')}",
         fontsize=22, fontweight="bold", color="white", y=0.97
     )
 
-    gs = gridspec.GridSpec(2, 3, figure=fig, hspace=0.35, wspace=0.28,
-                           left=0.03, right=0.97, top=0.92, bottom=0.04)
+    gs = gridspec.GridSpec(
+        2, 3, figure=fig,
+        hspace=0.40, wspace=0.26,
+        left=0.03, right=0.97, top=0.92, bottom=0.04
+    )
 
-    def load_panel(ax, path, title):
-        """Load a saved PNG into an axes panel."""
-        if os.path.exists(path):
-            img = mpimg.imread(path)
-            ax.imshow(img)
-            ax.set_title(title, fontsize=13, fontweight="bold",
-                         color="white", pad=8)
-            ax.axis("off")
-            ax.set_facecolor("#161b22")
+    # ── [0,0] Risk Heatmap — rendered natively ───────────────────────────────
+    ax_risk = fig.add_subplot(gs[0, 0])
+    ax_risk.set_facecolor(_PANEL)
+    ax_risk.set_title("Composite Risk Score - Top 30 Nodes",
+                      fontsize=12, fontweight="bold", color="white", pad=8)
+
+    if risk_df is not None and not risk_df.empty:
+        top30 = risk_df.head(30).copy()
+        dept_colors = {'IT': _BLUE, 'Finance': _GREEN, 'HR': _GOLD, 'Operations': "#ff7b54"}
+        hm_colors = [dept_colors.get(str(d), _GREY) for d in top30.get('department', [''] * len(top30))]
+        node_labels = [f"N{int(n)}" for n in top30['node_id']]
+        bars_h = ax_risk.barh(node_labels, top30['risk_score'],
+                              color=hm_colors, edgecolor='none', height=0.72)
+        # Annotate score on bar
+        for bar, score in zip(bars_h, top30['risk_score']):
+            ax_risk.text(bar.get_width() + 0.002, bar.get_y() + bar.get_height() / 2,
+                         f'{score:.3f}', va='center', ha='left',
+                         color=_TEXT, fontsize=6.5, fontfamily='monospace')
+        ax_risk.set_xlabel('Risk Score', color=_TEXT, fontsize=9)
+        ax_risk.tick_params(colors=_TEXT, labelsize=7)
+        for spine in ax_risk.spines.values():
+            spine.set_color('#30363d')
+        ax_risk.grid(axis='x', color='#30363d', linewidth=0.4, alpha=0.6)
+        from matplotlib.patches import Patch as _HPatch
+        ax_risk.legend(handles=[_HPatch(facecolor=c, label=d) for d, c in dept_colors.items()],
+                       fontsize=8, facecolor=_PANEL, labelcolor=_TEXT,
+                       edgecolor='#444466', loc='lower right')
+    else:
+        # Fallback: load from file if available
+        import matplotlib.image as mpimg
+        hm_path = f"outputs/risk_heatmap_{scenario_name}.png"
+        ax_risk.axis("off")
+        if os.path.exists(hm_path):
+            ax_risk.imshow(mpimg.imread(hm_path), aspect='auto')
         else:
-            ax.set_facecolor("#161b22")
-            ax.text(0.5, 0.5, f"Chart not found:\n{path}",
-                    ha="center", va="center", color="#888", fontsize=10,
-                    transform=ax.transAxes)
-            ax.set_title(title, fontsize=13, fontweight="bold",
-                         color="white", pad=8)
-            ax.axis("off")
+            ax_risk.text(0.5, 0.5, "Risk data unavailable",
+                         ha="center", va="center", color=_GREY,
+                         fontsize=11, transform=ax_risk.transAxes)
 
-    # Panel 1 — Risk Heatmap
-    ax1 = fig.add_subplot(gs[0, 0])
-    load_panel(ax1,
-               f"outputs/risk_heatmap_{scenario_name}.png",
-               "Composite Risk Score — Top 30 Nodes")
+    # ── [0,1] Detection Timeline — rendered natively ─────────────────────────
+    ax_det = fig.add_subplot(gs[0, 1])
+    ax_det.set_facecolor(_PANEL)
+    ax_det.set_title("GNN Anomaly Detection Timeline",
+                     fontsize=12, fontweight="bold", color="white", pad=8)
 
-    # Panel 2 — Detection Timeline
-    ax2 = fig.add_subplot(gs[0, 1])
-    load_panel(ax2,
-               f"outputs/detection_timeline_{scenario_name}.png",
-               "GNN Anomaly Detection Timeline")
+    if det_log and inf_log:
+        import collections
+        inf_dict = collections.defaultdict(list)
+        for t, nodes in inf_log:
+            inf_dict[t].extend(nodes)
+        det_dict = collections.defaultdict(list)
+        for t, nodes in det_log:
+            det_dict[t].extend(nodes)
+        all_ts = sorted(set(inf_dict) | set(det_dict))
+        cum_inf, cum_det = [], []
+        inf_set, det_set = set(), set()
+        for t in all_ts:
+            inf_set.update(inf_dict[t])
+            det_set.update(det_dict[t])
+            cum_inf.append(len(inf_set))
+            cum_det.append(len(det_set))
 
-    # Panel 3 — Strategy Comparison
-    ax3 = fig.add_subplot(gs[1, 0])
-    load_panel(ax3,
-               f"outputs/strategy_comparison_{scenario_name}.png",
-               "Defense Strategy Comparison (Monte Carlo, 30 runs)")
+        ax_det.plot(all_ts, cum_inf,  color=_RED,  label='Infected',
+                    linewidth=2.5)
+        ax_det.plot(all_ts, cum_det,  color=_GOLD, label='Detected (GNN)',
+                    linewidth=2.5, linestyle='--')
+        ax_det.fill_between(all_ts, cum_det, cum_inf,
+                            alpha=0.10, color=_RED, label='Undetected gap')
+        lead = detection_metrics.get('detection_lead_time_mean', 0)
+        tpr  = detection_metrics.get('true_positive_rate', 0) * 100
+        ax_det.text(0.98, 0.04,
+                    f'Lead: +{lead:.1f} steps  |  TPR: {tpr:.0f}%',
+                    transform=ax_det.transAxes, ha='right', va='bottom',
+                    color=_GOLD, fontsize=9, fontfamily='monospace',
+                    fontweight='bold')
+        ax_det.set_ylim(bottom=0)
+    else:
+        import matplotlib.image as mpimg
+        dt_path = f"outputs/detection_timeline_{scenario_name}.png"
+        ax_det.axis("off")
+        if os.path.exists(dt_path):
+            ax_det.imshow(mpimg.imread(dt_path), aspect='auto')
+        else:
+            ax_det.text(0.5, 0.5, "Detection data unavailable",
+                        ha="center", va="center", color=_GREY,
+                        fontsize=11, transform=ax_det.transAxes)
 
-    # Panel 5 — Model Metrics
-    ax5 = fig.add_subplot(gs[0, 2])
-    ax5.set_facecolor("#161b22")
-    ax5.axis("off")
-    ax5.set_title("Model Performance Metrics", fontsize=13,
-                  fontweight="bold", color="white", pad=8)
+    ax_det.set_xlabel('Timestep', color=_TEXT, fontsize=9)
+    ax_det.set_ylabel('Cumulative Nodes', color=_TEXT, fontsize=9)
+    ax_det.tick_params(colors=_TEXT, labelsize=9)
+    for spine in ax_det.spines.values():
+        spine.set_color('#30363d')
+    ax_det.grid(True, color='#30363d', linewidth=0.4, alpha=0.6)
+    if det_log and inf_log:
+        ax_det.legend(fontsize=9, facecolor=_PANEL, labelcolor=_TEXT,
+                      edgecolor='#444466', loc='upper left')
+
+    # [0,2] Model Metrics (text)
+    ax_mm = fig.add_subplot(gs[0, 2])
+    ax_mm.set_facecolor(_PANEL)
+    ax_mm.axis("off")
+    ax_mm.set_title("Model Performance Metrics", fontsize=12,
+                    fontweight="bold", color="white", pad=8)
 
     mm = model_metrics or {}
+    def _c(val, good_thresh, low_is_good=False):
+        v = float(val or 0)
+        if low_is_good:
+            return _GREEN if v < good_thresh else _RED
+        return _GREEN if v >= good_thresh else _RED
+
     metric_lines = [
-        ("GNN ANOMALY DETECTOR", None, "#f5a623"),
-        ("Accuracy",        f"{mm.get('gnn_accuracy',0)*100:.1f}%",    "#ecf0f1"),
-        ("Precision",       f"{mm.get('gnn_precision',0)*100:.1f}%",   "#ecf0f1"),
-        ("Recall",          f"{mm.get('gnn_recall',0)*100:.1f}%",      "#3fb950" if mm.get('gnn_recall',0)>0.7 else "#f85149"),
-        ("F1 Score",        f"{mm.get('gnn_f1',0)*100:.1f}%",          "#3fb950" if mm.get('gnn_f1',0)>0.7 else "#f85149"),
-        ("AUC-ROC",         f"{mm.get('gnn_auc',0):.3f}",              "#3fb950" if mm.get('gnn_auc',0)>0.7 else "#f85149"),
-        ("False Pos Rate",  f"{mm.get('gnn_fpr',0)*100:.1f}%",         "#3fb950" if mm.get('gnn_fpr',0)<0.2 else "#f85149"),
-        ("TP / FP / FN",    f"{mm.get('gnn_tp',0)} / {mm.get('gnn_fp',0)} / {mm.get('gnn_fn',0)}", "#8b949e"),
-        ("", None, "white"),
-        ("RISK SCORING ENGINE", None, "#f5a623"),
-        ("Precision@5",     f"{mm.get('risk_precision_at_5',0)*100:.1f}%",  "#ecf0f1"),
-        ("Precision@10",    f"{mm.get('risk_precision_at_10',0)*100:.1f}%", "#ecf0f1"),
-        ("Precision@20",    f"{mm.get('risk_precision_at_20',0)*100:.1f}%", "#ecf0f1"),
-        ("Kendall\'s Tau", f"{mm.get('risk_kendall_tau',0):.3f}",          "#3fb950" if mm.get('risk_kendall_tau',0)>0.3 else "#8b949e"),
-        ("", None, "white"),
-        ("DQN RL AGENT", None, "#f5a623"),
-        ("Trained",         str(mm.get('dqn_trained', False)),              "#3fb950" if mm.get('dqn_trained') else "#f85149"),
-        ("Exploit Rate",    f"{mm.get('dqn_exploitation_rate',0)*100:.1f}%","#ecf0f1"),
-        ("Train Steps",     str(mm.get('dqn_train_steps', 0)),              "#8b949e"),
-        ("Tail Reward",     f"{mm.get('dqn_mean_tail_reward',0):+.3f}",     "#3fb950" if mm.get('dqn_mean_tail_reward',0)>0 else "#f85149"),
+        ("GNN ANOMALY DETECTOR",  None,                                              _GOLD),
+        ("Accuracy",    f"{mm.get('gnn_accuracy',0)*100:.1f}%",                     _TEXT),
+        ("Precision",   f"{mm.get('gnn_precision',0)*100:.1f}%",                    _TEXT),
+        ("Recall",      f"{mm.get('gnn_recall',0)*100:.1f}%",     _c(mm.get('gnn_recall',0),   0.7)),
+        ("F1 Score",    f"{mm.get('gnn_f1',0)*100:.1f}%",         _c(mm.get('gnn_f1',0),       0.7)),
+        ("AUC-ROC",     f"{mm.get('gnn_auc',0):.3f}",             _c(mm.get('gnn_auc',0),      0.7)),
+        ("False Pos Rate", f"{mm.get('gnn_fpr',0)*100:.1f}%",     _c(mm.get('gnn_fpr',0),      0.2, low_is_good=True)),
+        ("TP / FP / FN", f"{mm.get('gnn_tp',0)} / {mm.get('gnn_fp',0)} / {mm.get('gnn_fn',0)}", _GREY),
+        ("",            None,                                                        _TEXT),
+        ("RISK SCORING ENGINE",   None,                                              _GOLD),
+        ("Precision@5",  f"{mm.get('risk_precision_at_5',0)*100:.1f}%",             _TEXT),
+        ("Precision@10", f"{mm.get('risk_precision_at_10',0)*100:.1f}%",            _TEXT),
+        ("Precision@20", f"{mm.get('risk_precision_at_20',0)*100:.1f}%",            _TEXT),
+        ("Kendall's Tau", f"{mm.get('risk_kendall_tau',0):.3f}",  _c(mm.get('risk_kendall_tau',0), 0.3)),
+        ("",            None,                                                        _TEXT),
+        ("DQN RL AGENT",          None,                                              _GOLD),
+        ("Trained",     str(mm.get('dqn_trained', False)),        _GREEN if mm.get('dqn_trained') else _RED),
+        ("Exploit Rate", f"{mm.get('dqn_exploitation_rate',0)*100:.1f}%",           _TEXT),
+        ("Train Steps", str(mm.get('dqn_train_steps', 0)),                          _GREY),
+        ("Tail Reward", f"{mm.get('dqn_mean_tail_reward',0):+.3f}", _c(mm.get('dqn_mean_tail_reward',0), 0.0)),
     ]
+
+    # Auto-fit: calculate step so all lines fill the panel
+    n_lines = sum(1 for l,v,c in metric_lines if l != "")
+    n_gaps  = sum(1 for l,v,c in metric_lines if l == "")
+    total   = n_lines * 1 + n_gaps * 0.4
+    step    = min(0.040, 0.92 / total)
+    gap     = step * 0.4
 
     my = 0.97
     for label, value, color in metric_lines:
         if label == "":
-            my -= 0.02
-            continue
+            my -= gap; continue
         if value is None:
-            ax5.text(0.03, my, label, transform=ax5.transAxes,
-                     fontsize=9.5, fontweight="bold", color=color, va="top",
-                     fontfamily="monospace")
-            my -= 0.042
+            ax_mm.text(0.03, my, label, transform=ax_mm.transAxes,
+                       fontsize=8.5, fontweight="bold", color=color, va="top",
+                       fontfamily="monospace")
+            my -= step
         else:
-            ax5.text(0.03, my, label, transform=ax5.transAxes,
-                     fontsize=9, color="#8b949e", va="top", fontfamily="monospace")
-            ax5.text(0.97, my, value, transform=ax5.transAxes,
-                     fontsize=9, color=color, va="top", ha="right",
-                     fontfamily="monospace", fontweight="bold")
-            my -= 0.046
+            ax_mm.text(0.03, my, label, transform=ax_mm.transAxes,
+                       fontsize=8, color=_GREY, va="top", fontfamily="monospace")
+            ax_mm.text(0.97, my, value, transform=ax_mm.transAxes,
+                       fontsize=8, color=color, va="top", ha="right",
+                       fontfamily="monospace", fontweight="bold")
+            my -= step
 
-    # Panel 6 — move stats summary to gs[1,2]
-    ax4_new = fig.add_subplot(gs[1, 2])
-    ax4_new.set_facecolor("#161b22")
-    ax4_new.axis("off")
-    ax4_new.set_title("Scenario Intelligence Summary", fontsize=13,
-                      fontweight="bold", color="white", pad=8)
+    # [1,0:2] Strategy Comparison — native inline chart (spans two columns)
+    ax_strat = fig.add_subplot(gs[1, 0:2])
+    ax_strat.set_facecolor(_PANEL)
+    ax_strat.set_title("Defense Strategy Comparison (Monte Carlo, 30 runs)",
+                       fontsize=12, fontweight="bold", color="white", pad=8)
+    strat_sorted = strategy_df.sort_values("mean_infection_rate", ascending=True)
+    _strats = strat_sorted["strategy_name"].tolist()
+    _rates  = (strat_sorted["mean_infection_rate"] * 100).tolist()
+    _colors = [_RED    if s == "none" else
+               _GREEN  if s in ("isolate_chokepoints", "patch_centrality", "patch_vulnerable") else
+               "#a855f7" if s == "rl_agent" else
+               _GOLD   if s == "anomaly_guided" else
+               _BLUE   for s in _strats]
+    _bars = ax_strat.barh(_strats, _rates, color=_colors, edgecolor="none", height=0.55)
+    for _bar, _rate in zip(_bars, _rates):
+        ax_strat.text(_bar.get_width() + 0.05, _bar.get_y() + _bar.get_height() / 2,
+                      f"{_rate:.1f}%", va="center", ha="left",
+                      color=_TEXT, fontsize=10, fontweight="bold")
+    ax_strat.set_xlabel("Mean Infection Rate (%)", color=_TEXT, fontsize=10)
+    ax_strat.set_xlim(0, max(_rates) * 1.3)
+    ax_strat.tick_params(colors=_TEXT, labelsize=10)
+    for spine in ax_strat.spines.values(): spine.set_color("#444466")
+    from matplotlib.patches import Patch as _Patch
+    ax_strat.legend(handles=[
+        _Patch(facecolor=_RED,      label="No Defense"),
+        _Patch(facecolor=_GREEN,    label="Heuristic"),
+        _Patch(facecolor="#a855f7", label="RL Agent"),
+        _Patch(facecolor=_GOLD,     label="AI Guided"),
+        _Patch(facecolor=_BLUE,     label="Random"),
+    ], fontsize=9, facecolor=_PANEL, labelcolor=_TEXT,
+       edgecolor="#444466", loc="lower right")
+    ax_strat.grid(axis='x', color='#30363d', linewidth=0.5, alpha=0.7)
 
-    final_rate   = base_sim_result.get("final_infection_rate", 0) * 100
-    viz_rate     = viz_sim_result.get("final_infection_rate", 0) * 100
-    velocity     = base_sim_result.get("spread_velocity", 0)
-    t_crit       = base_sim_result.get("time_to_first_critical_node")
-    t_crit_str   = f"Timestep {t_crit}" if t_crit else "Not reached"
-    stages       = list(base_sim_result.get("attack_stages_timeline", {}).keys())
-    lead_time    = detection_metrics.get("detection_lead_time_mean", 0)
-    tpr          = detection_metrics.get("true_positive_rate", 0) * 100
-    fdr          = detection_metrics.get("false_positive_rate", 0) * 100
-    best_row2    = strategy_df.sort_values("mean_infection_rate").iloc[0]
-    worst_row2   = strategy_df.sort_values("mean_infection_rate").iloc[-1]
-    best_strat2  = best_row2["strategy_name"]
-    best_rate2   = best_row2["mean_infection_rate"] * 100
-    worst_rate2  = worst_row2["mean_infection_rate"] * 100
-    reduction2   = worst_rate2 - best_rate2
+    # [1,2] Scenario Intelligence Summary (text)
+    ax_sum = fig.add_subplot(gs[1, 2])
+    ax_sum.set_facecolor(_PANEL)
+    ax_sum.axis("off")
+    ax_sum.set_title("Scenario Intelligence Summary", fontsize=12,
+                     fontweight="bold", color="white", pad=8)
+
+    base_pct  = base_sim_result.get("final_infection_rate", 0) * 100
+    velocity  = base_sim_result.get("spread_velocity", 0)
+    t_crit    = base_sim_result.get("time_to_first_critical_node")
+    t_crit_s  = f"Timestep {t_crit}" if t_crit else "Not reached"
+    stages    = list(base_sim_result.get("attack_stages_timeline", {}).keys())
+    lead      = detection_metrics.get("detection_lead_time_mean", 0)
+    tpr       = detection_metrics.get("true_positive_rate", 0) * 100
+    fdr       = detection_metrics.get("false_positive_rate", 0) * 100
+    best_row  = strategy_df.sort_values("mean_infection_rate").iloc[0]
+    worst_row = strategy_df.sort_values("mean_infection_rate").iloc[-1]
+    best_s    = best_row["strategy_name"]
+    best_r    = best_row["mean_infection_rate"] * 100
+    worst_r   = worst_row["mean_infection_rate"] * 100
+    reduction = worst_r - best_r
 
     sum_lines = [
-        ("ATTACK METRICS", None, "#58a6ff"),
-        (f"Base infection rate",    f"{final_rate:.1f}%",        "white"),
-        (f"Spread velocity",        f"{velocity:.2f} nodes/step","white"),
-        (f"Time to critical node",  t_crit_str,                  "white"),
-        (f"Attack stages reached",  str(len(stages)),            "white"),
-        ("", None, "white"),
-        ("GNN DETECTION", None, "#58a6ff"),
-        (f"Detection lead time",    f"+{lead_time:.1f} steps",   "#3fb950" if lead_time>0 else "#f85149"),
-        (f"True positive rate",     f"{tpr:.1f}%",               "#3fb950" if tpr>80 else "#f85149"),
-        (f"False discovery rate",   f"{fdr:.1f}%",               "#3fb950" if fdr<20 else "#f85149"),
-        ("", None, "white"),
-        ("DEFENSE OUTCOME", None, "#58a6ff"),
-        (f"Best strategy",          best_strat2,                 "#3fb950"),
-        (f"Best infection rate",    f"{best_rate2:.1f}%",        "#3fb950"),
-        (f"Worst infection rate",   f"{worst_rate2:.1f}%",       "#f85149"),
-        (f"Reduction achieved",     f"{reduction2:.1f}%",        "#3fb950"),
+        ("ATTACK METRICS",        None,                                   _BLUE),
+        ("Base infection rate",   f"{base_pct:.1f}%",                    _TEXT),
+        ("Spread velocity",       f"{velocity:.2f} nodes/step",          _TEXT),
+        ("Time to critical node", t_crit_s,                              _TEXT),
+        ("Attack stages reached", str(len(stages)),                      _TEXT),
+        ("",                      None,                                   _TEXT),
+        ("GNN DETECTION",         None,                                   _BLUE),
+        ("Detection lead time",   f"+{lead:.1f} steps",   _GREEN if lead > 0 else _RED),
+        ("True positive rate",    f"{tpr:.1f}%",           _GREEN if tpr > 80 else _RED),
+        ("False discovery rate",  f"{fdr:.1f}%",           _GREEN if fdr < 20 else _RED),
+        ("",                      None,                                   _TEXT),
+        ("DEFENSE OUTCOME",       None,                                   _BLUE),
+        ("Best strategy",         best_s,                                 _GREEN),
+        ("Best infection rate",   f"{best_r:.1f}%",                      _GREEN),
+        ("Worst infection rate",  f"{worst_r:.1f}%",                     _RED),
+        ("Reduction achieved",    f"{reduction:.1f}%",                   _GREEN),
     ]
+
+    sn_lines = sum(1 for l,v,c in sum_lines if l != "")
+    sn_gaps  = sum(1 for l,v,c in sum_lines if l == "")
+    s_step   = min(0.048, 0.92 / (sn_lines + sn_gaps * 0.4))
+    s_gap    = s_step * 0.4
 
     sy = 0.97
     for label, value, color in sum_lines:
         if label == "":
-            sy -= 0.025
-            continue
+            sy -= s_gap; continue
         if value is None:
-            ax4_new.text(0.04, sy, label, transform=ax4_new.transAxes,
-                         fontsize=10, fontweight="bold", color=color, va="top",
-                         fontfamily="monospace")
-            sy -= 0.045
+            ax_sum.text(0.04, sy, label, transform=ax_sum.transAxes,
+                        fontsize=8.5, fontweight="bold", color=color, va="top",
+                        fontfamily="monospace")
+            sy -= s_step
         else:
-            ax4_new.text(0.04, sy, label, transform=ax4_new.transAxes,
-                         fontsize=9.5, color="#8b949e", va="top", fontfamily="monospace")
-            ax4_new.text(0.96, sy, value, transform=ax4_new.transAxes,
-                         fontsize=9.5, color=color, va="top", ha="right",
-                         fontfamily="monospace", fontweight="bold")
-            sy -= 0.052
+            ax_sum.text(0.04, sy, label, transform=ax_sum.transAxes,
+                        fontsize=8, color=_GREY, va="top", fontfamily="monospace")
+            ax_sum.text(0.96, sy, value, transform=ax_sum.transAxes,
+                        fontsize=8, color=color, va="top", ha="right",
+                        fontfamily="monospace", fontweight="bold")
+            sy -= s_step
 
     out_path = f"outputs/dashboard_{scenario_name}.png"
     plt.savefig(out_path, dpi=150, bbox_inches="tight",
@@ -210,6 +324,7 @@ def generate_scenario_dashboard(scenario_name: str, strategy_df, detection_metri
     plt.close(fig)
     print(f"      -> Saved {out_path}")
     return out_path
+
 
 
 
@@ -505,7 +620,7 @@ def execute_scenario_pipeline(scenario_name: str, G, entry_nodes, attacker_mode:
         # ----------------------------------------------------------------
         fig = plt.figure(figsize=(20, 14), facecolor=_DARK)
         fig.suptitle(
-            f"GraphShield — Scenario: {scenario_name.replace('_', ' ')}",
+            f"AEGIS - Scenario: {scenario_name.replace('_', ' ')}",
             fontsize=20, fontweight='bold', color=_TEXT, y=0.98
         )
 
@@ -697,7 +812,7 @@ def execute_scenario_pipeline(scenario_name: str, G, entry_nodes, attacker_mode:
             hm_colors = [dept_palette.get(d, _TEXT) for d in top30['department']]
             hm_ax.barh(top30['node_id'], top30['risk_score'], color=hm_colors, edgecolor='none', height=0.7)
             hm_ax.set_xlabel('Composite Risk Score', color=_TEXT, fontsize=10)
-            hm_ax.set_title(f'Risk Heatmap — Top 30 Nodes ({scenario_name})', color=_TEXT, fontsize=11, fontweight='bold')
+            hm_ax.set_title(f'Risk Heatmap - Top 30 Nodes ({scenario_name})', color=_TEXT, fontsize=11, fontweight='bold')
             hm_ax.tick_params(colors=_TEXT, labelsize=8)
             for spine in hm_ax.spines.values(): spine.set_color('#444466')
             from matplotlib.patches import Patch
@@ -728,7 +843,7 @@ def execute_scenario_pipeline(scenario_name: str, G, entry_nodes, attacker_mode:
 
         plt.close('all')
 
-        # Dashboard — composite 4-panel figure
+        # Dashboard — composite 4-panel figure (native rendering, no external PNGs)
         generate_scenario_dashboard(
             scenario_name,
             strategy_df,
@@ -736,6 +851,9 @@ def execute_scenario_pipeline(scenario_name: str, G, entry_nodes, attacker_mode:
             base_sim_result,
             viz_sim_result,
             model_metrics=model_metrics,
+            risk_df=risk_df,
+            det_log=det_log,
+            inf_log=inf_log,
         )
         print(f"      -> All charts saved to outputs/")
 
@@ -1027,7 +1145,7 @@ def run_full_pipeline(skip_report: bool, visualize: bool = False):
         ax.set_xticklabels([s.replace('_', '\n') for s in scenarios],
                            color='white', fontsize=10)
         ax.set_ylabel('Score (%)', color='white', fontsize=11)
-        ax.set_title('AEGIS — Cross-Scenario Model Performance',
+        ax.set_title('AEGIS - Cross-Scenario Model Performance',
                      color='white', fontsize=14, fontweight='bold', pad=12)
         ax.set_ylim(0, 115)
         ax.tick_params(colors='white')
