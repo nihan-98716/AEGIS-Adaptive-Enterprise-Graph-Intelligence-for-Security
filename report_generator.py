@@ -147,6 +147,7 @@ The report must:
   based on the resilience score"""
 
         print(f"\nSubmitting Payload to Ollama ({self.model_name}) for Scenario: {context_payload['scenario_name']}...")
+        print(f"  (This may take 1-3 minutes while Mistral loads — please wait...)")
         
         try:
              response = ollama.chat(
@@ -154,7 +155,8 @@ The report must:
                  messages=[
                      {'role': 'system', 'content': system_instruction},
                      {'role': 'user', 'content': user_prompt},
-                 ]
+                 ],
+                 options={'num_predict': 1024},
              )
              return response.message.content
         except AttributeError:
@@ -203,6 +205,7 @@ Generate a cross-scenario executive summary comparing:
 Structure the output cleanly using Markdown headers."""
 
         print(f"\nSubmitting Meta-Analysis Payload to Ollama ({self.model_name})...")
+        print(f"  (This may take 1-3 minutes while Mistral loads — please wait...)")
              
         try:
              response = ollama.chat(
@@ -210,7 +213,8 @@ Structure the output cleanly using Markdown headers."""
                  messages=[
                      {'role': 'system', 'content': system_instruction},
                      {'role': 'user', 'content': user_prompt},
-                 ]
+                 ],
+                 options={'num_predict': 1024},
              )
              report_text = response.message.content
         except AttributeError:

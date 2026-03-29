@@ -126,7 +126,7 @@ def get_hub_nodes(G):
             if d.get('node_type') == 'controller' 
             or d.get('node_id') in ['DC-1', 'CORE-1', 'AUTH-1']]
 
-def visualize_graph(G, output_file="cyber_network.html", title="AEGIS — Enterprise Network"):
+def visualize_graph(G, output_file="cyber_network.html", title="AEGIS - Enterprise Network"):
     """
     Generates a standalone vis.js HTML network visualisation — no pyvis
     physics quirks, works in any browser without a loading bar hang.
@@ -233,8 +233,7 @@ def visualize_graph(G, output_file="cyber_network.html", title="AEGIS — Enterp
 <head>
 <meta charset="utf-8">
 <title>{title}</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/vis/4.21.0/vis.min.js"></script>
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/vis/4.21.0/vis.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/vis-network/9.1.9/standalone/umd/vis-network.min.js"></script>
 <style>
   * {{ margin:0; padding:0; box-sizing:border-box; }}
   body {{ background:#1a1a2e; font-family: monospace; overflow:hidden; }}
@@ -270,10 +269,17 @@ def visualize_graph(G, output_file="cyber_network.html", title="AEGIS — Enterp
   <div class="note">Node size = risk score &nbsp;|&nbsp; Edge width = exploitability</div>
 </div>
 <div id="stats">Scroll to zoom &nbsp;·&nbsp; Drag to pan &nbsp;·&nbsp; Hover node for details</div>
+<div id="loading" style="position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);
+  background:#16213e;border:1px solid #444466;border-radius:10px;padding:20px 32px;
+  color:#f5a623;font-size:14px;z-index:99999;text-align:center;">
+  Stabilising network layout...<br><span style="color:#8b949e;font-size:11px;">This takes a few seconds</span>
+</div>
 <div id="network"></div>
 <script>
-  var nodes = new vis.DataSet({nodes_json});
-  var edges = new vis.DataSet({edges_json});
+  var nodesData = {nodes_json};
+  var edgesData = {edges_json};
+  var nodes = new vis.DataSet(nodesData);
+  var edges = new vis.DataSet(edgesData);
   var container = document.getElementById('network');
   var options = {{
     nodes: {{ borderWidth: 2, borderWidthSelected: 4 }},
@@ -295,6 +301,7 @@ def visualize_graph(G, output_file="cyber_network.html", title="AEGIS — Enterp
   var network = new vis.Network(container, {{ nodes: nodes, edges: edges }}, options);
   network.once('stabilizationIterationsDone', function() {{
     network.setOptions({{ physics: {{ enabled: false }} }});
+    document.getElementById('loading').style.display = 'none';
   }});
 </script>
 </body>
