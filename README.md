@@ -140,25 +140,25 @@ AEGIS follows a modular architecture with clear separation of concerns:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                        Main Orchestrator                     │
-│                         (main.py)                            │
+│                        Main Orchestrator                    │
+│                         (main.py)                           │
 └────────────┬──────────────────────────────────┬─────────────┘
              │                                  │
     ┌────────▼────────┐                ┌───────▼────────┐
-    │  Network Layer  │                │  Analysis Layer │
-    │                 │                │                 │
-    │ • Graph Gen     │                │ • Risk Engine   │
-    │ • Propagation   │                │ • Anomaly Det.  │
-    │ • Visualization │                │ • AI Modules    │
+    │  Network Layer  │                │  Analysis Layer│
+    │                 │                │                │
+    │ • Graph Gen     │                │ • Risk Engine  │
+    │ • Propagation   │                │ • Anomaly Det. │
+    │ • Visualization │                │ • AI Modules   │
     └────────┬────────┘                └───────┬────────┘
              │                                  │
     ┌────────▼────────┐                ┌───────▼────────┐
-    │  Defense Layer  │                │  Report Layer   │
-    │                 │                │                 │
-    │ • Strategies    │                │ • NL Reports    │
-    │ • Simulation    │                │ • Metrics       │
-    │ • RL Agent      │                │ • Visualization │
-    └─────────────────┘                └─────────────────┘
+    │  Defense Layer  │                │  Report Layer  │
+    │                 │                │                │
+    │ • Strategies    │                │ • NL Reports   │
+    │ • Simulation    │                │ • Metrics      │
+    │ • RL Agent      │                │ • Visualization│
+    └─────────────────┘                └────────────────┘
 ```
 
 **Data Flow:**
@@ -679,14 +679,6 @@ See [LICENSE](LICENSE) file for full license text.
 
 ---
 
-## 📧 Contact
-
-For questions, suggestions, or collaboration inquiries:
-- **GitHub Issues**: [Report bugs or request features](https://github.com/yourusername/AEGIS/issues)
-- **Discussions**: [Join the community conversation](https://github.com/yourusername/AEGIS/discussions)
-
----
-
 ## 🔮 Future Roadmap
 
 ### Planned Features
@@ -711,9 +703,5 @@ For questions, suggestions, or collaboration inquiries:
 ---
 
 <div align="center">
-
-**Built with ❤️ for the cybersecurity research community**
-
-⭐ Star this repo if you find it useful!
 
 </div>
