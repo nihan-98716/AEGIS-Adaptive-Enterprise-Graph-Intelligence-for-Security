@@ -1,6 +1,6 @@
 # AEGIS
 
-**AEGIS (Enterprise Cyber Contagion Simulator)** is an advanced simulation framework designed to model, analyze, and visualize the spread of cyber contagions across enterprise networks. 
+**AEGIS (Adaptive Enterprise Graph Intelligence for Security)** is an advanced simulation framework designed to model, analyze, and visualize the spread of cyber contagions across enterprise networks. 
 
 ## Features
 
