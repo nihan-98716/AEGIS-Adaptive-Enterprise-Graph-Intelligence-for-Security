@@ -1,0 +1,28 @@
+# Core Dependencies
+networkx>=3.0
+numpy>=1.24.0
+pandas>=2.0.0
+matplotlib>=3.7.0
+seaborn>=0.12.0
+scipy>=1.10.0
+
+# Machine Learning (Required for anomaly detection)
+scikit-learn>=1.3.0
+
+# Deep Learning (Optional - only if AI_MODE=True in config.py)
+# Uncomment the following lines to enable PyTorch-based GNN and RL modules:
+# torch>=2.0.0
+# torch-geometric>=2.3.0
+
+# Natural Language Processing (Optional - for report generation)
+# Uncomment the following lines to enable NLP-based report generation:
+# ollama>=0.1.0
+# google-generativeai>=0.3.0
+# python-dotenv>=1.0.0
+
+# Visualization (Optional - for interactive graphs)
+plotly>=5.14.0
+
+# Additional utilities
+# If you need to work with the inspect/test scripts:
+# requests>=2.31.0
